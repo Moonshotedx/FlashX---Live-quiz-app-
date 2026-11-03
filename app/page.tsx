@@ -1,4 +1,5 @@
 'use client';
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
 
@@ -6,7 +7,7 @@ export default function Landing() {
   const router = useRouter();
   const [code, setCode] = useState('');
   return (
-    <main className="flex min-h-screen items-center justify-center bg-gradient-to-br from-[#0F0C29] via-[#302B63] to-[#24243E] p-6 text-white">
+    <main className="relative flex min-h-screen flex-col items-center justify-center bg-gradient-to-br from-[#0F0C29] via-[#302B63] to-[#24243E] p-6 text-white">
       <form
         onSubmit={(e) => {
           e.preventDefault();
@@ -28,9 +29,14 @@ export default function Landing() {
           aria-label="Join code"
           className="h-16 w-full rounded-2xl border-2 border-white/20 bg-white/10 text-center text-3xl font-extrabold uppercase tracking-[0.3em] placeholder:text-white/30 focus:border-cyan-300 focus:outline-none"
         />
-        <button className="h-16 w-full rounded-2xl bg-violet-600 text-xl font-extrabold">Continue</button>
+        <button className="h-16 w-full rounded-2xl bg-violet-600 text-xl font-extrabold hover:bg-violet-500">Continue</button>
       </form>
+      <Link
+        href="/admin/login"
+        className="mt-10 text-xs font-medium text-white/50 transition hover:text-white/90"
+      >
+        Host / Admin login →
+      </Link>
     </main>
   );
 }
-
