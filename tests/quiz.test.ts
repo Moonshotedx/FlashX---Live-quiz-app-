@@ -279,7 +279,7 @@ describe('Quiz validation, CSV import/export, Excel (.xlsx) workbook, profanity,
     assert.ok(out.includes("'=SUM(1,2)"), 'Leading = must be neutralized');
   });
 
-  it('builds CSV and 3-sheet Excel (.xlsx) exports with green/red answer shading', async () => {
+  it('builds CSV and 4-sheet Excel (.xlsx) exports with Email/Team/Started at, omitted empty Roll number, and Teams sheet', async () => {
     const fakeSession = {
       id: 'ses-1',
       quiz_id: 'quiz-1',
@@ -287,8 +287,9 @@ describe('Quiz validation, CSV import/export, Excel (.xlsx) workbook, profanity,
       status: 'revealed',
       duration_seconds: 300,
       started_at: '2026-11-05T10:00:00.000Z',
-      ends_at: '2026-11-05T10:05:00.000Z',
+      ends_at: null,
       ended_at: '2026-11-05T10:05:00.000Z',
+      closes_at: null,
       quiz_snapshot: SAMPLE_SNAPSHOT,
       revealed_at: '2026-11-05T10:05:10.000Z',
       reveal_mode: 'auto',
@@ -305,8 +306,12 @@ describe('Quiz validation, CSV import/export, Excel (.xlsx) workbook, profanity,
         allow_late_join: true,
         show_live_leaderboard: false,
         show_answers_after_reveal: true,
-        roll_number_mode: 'optional',
+        roll_number_mode: 'off',
         roll_number_label: 'USN',
+        team_mode: 'list',
+        teams: ['Team Alpha'],
+        email_required: true,
+        score_visibility: 'after_publish',
         theme: {},
         created_at: '2026-11-05T09:00:00.000Z',
         updated_at: '2026-11-05T09:00:00.000Z',
@@ -322,7 +327,7 @@ describe('Quiz validation, CSV import/export, Excel (.xlsx) workbook, profanity,
           name: 'Aarav',
           email: 'aarav@example.com',
           team: 'Team Alpha',
-          rollNumber: '1AT22CS001',
+          rollNumber: null,
           score: 2,
           correctCount: 1,
           timeTakenMs: 25_400,
@@ -367,7 +372,9 @@ describe('Quiz validation, CSV import/export, Excel (.xlsx) workbook, profanity,
 
     const csv = buildCsv(fakeSession, results);
     assert.equal(csv.filename, 'AIT-Tech-Quiz_2026-11-05_leaderboard.csv');
-    assert.ok(csv.body.includes('1,Aarav,1AT22CS001,2,1,3,25.4'));
+    assert.equal(csv.body.includes('Roll number'), false, 'Roll number must be omitted when empty for every row');
+    assert.ok(csv.body.includes('Rank,Name,Email,Team,Score,Correct count,Total questions,Time taken (seconds),Started at,Submitted at,Auto submitted'));
+    assert.ok(csv.body.includes('1,Aarav,aarav@example.com,Team Alpha,2,1,3,25.4,2026-11-05T10:00:00.000Z'));
 
     const xlsx = await buildXlsx(fakeSession, results);
     assert.equal(xlsx.filename, 'AIT-Tech-Quiz_2026-11-05_results.xlsx');
@@ -375,11 +382,15 @@ describe('Quiz validation, CSV import/export, Excel (.xlsx) workbook, profanity,
     await wb.xlsx.load(xlsx.buffer);
     assert.deepEqual(
       wb.worksheets.map((w) => w.name),
-      ['Leaderboard', 'Responses', 'Question stats'],
+      ['Leaderboard', 'Responses', 'Question stats', 'Teams'],
     );
+    // Responses has 4 meta columns (Rank, Name, Email, Team) when Roll number is empty -> Q1 is cell 5, Q2 is cell 6
     const respRow = wb.getWorksheet('Responses')!.getRow(2);
-    assert.equal((respRow.getCell(4).fill as ExcelJS.FillPattern).fgColor?.argb, 'FFBBF7D0'); // green
-    assert.equal((respRow.getCell(5).fill as ExcelJS.FillPattern).fgColor?.argb, 'FFFECACA'); // red
+    assert.equal((respRow.getCell(5).fill as ExcelJS.FillPattern).fgColor?.argb, 'FFBBF7D0'); // green
+    assert.equal((respRow.getCell(6).fill as ExcelJS.FillPattern).fgColor?.argb, 'FFFECACA'); // red
+    const teamRow = wb.getWorksheet('Teams')!.getRow(2);
+    assert.equal(teamRow.getCell(2).value, 'Team Alpha');
+    assert.equal(teamRow.getCell(6).value, 'Aarav (2)');
   });
 
   it('generates unambiguous 6-char join codes without 0/O/1/I/L', () => {

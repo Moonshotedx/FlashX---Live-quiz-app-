@@ -23,13 +23,13 @@ export default async function QuizEditorPage({ params }: { params: Promise<{ qui
         duration_seconds: quiz.duration_seconds,
         shuffle_questions: quiz.shuffle_questions,
         shuffle_options: quiz.shuffle_options,
-        allow_late_join: quiz.allow_late_join,
         show_live_leaderboard: quiz.show_live_leaderboard,
         show_answers_after_reveal: quiz.show_answers_after_reveal,
-        roll_number_mode: quiz.roll_number_mode,
-        roll_number_label: quiz.roll_number_label,
+        team_mode: quiz.team_mode ?? 'list',
+        teams: quiz.teams ?? [],
+        email_required: quiz.email_required ?? true,
+        score_visibility: quiz.score_visibility ?? 'after_publish',
       }}
     />
   );
 }
-

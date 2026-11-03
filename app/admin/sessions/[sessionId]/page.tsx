@@ -19,8 +19,7 @@ export default async function SessionPage({ params }: { params: Promise<{ sessio
       quizTitle={s.quizzes.title}
       presenterToken={presenterToken(s.id)}
       appUrl={process.env.NEXT_PUBLIC_APP_URL || ''}
-      rollMode={s.quizzes.roll_number_mode}
+      initialClosesAt={s.closes_at}
     />
   );
 }
-

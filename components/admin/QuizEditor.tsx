@@ -7,7 +7,7 @@ import { SortableContext, arrayMove, sortableKeyboardCoordinates, verticalListSo
 import { api, ApiError } from '@/lib/client-api';
 import { validateQuiz, type EditableQuestion } from '@/lib/validate-quiz';
 import { resolveTheme, sanitizeTheme } from '@/lib/theme';
-import type { QuizRow, Theme } from '@/lib/types';
+import type { QuizRow, ScoreVisibility, TeamMode, Theme } from '@/lib/types';
 import { QuestionCard, newQuestion } from './QuestionCard';
 import { ThemeEditor } from './ThemeEditor';
 import { ImportModal } from './ImportModal';
@@ -19,17 +19,28 @@ export type QuizSettings = Pick<
   | 'duration_seconds'
   | 'shuffle_questions'
   | 'shuffle_options'
-  | 'allow_late_join'
   | 'show_live_leaderboard'
   | 'show_answers_after_reveal'
-  | 'roll_number_mode'
-  | 'roll_number_label'
+  | 'team_mode'
+  | 'teams'
+  | 'email_required'
+  | 'score_visibility'
 >;
 
 type SaveStatus = 'saved' | 'dirty' | 'saving' | 'error';
 type Tab = 'questions' | 'settings' | 'theme';
 
-export function QuizEditor({ quizId, initialSettings, initialTheme, initialQuestions }: { quizId: string; initialSettings: QuizSettings; initialTheme: Partial<Theme>; initialQuestions: EditableQuestion[] }) {
+export function QuizEditor({
+  quizId,
+  initialSettings,
+  initialTheme,
+  initialQuestions,
+}: {
+  quizId: string;
+  initialSettings: QuizSettings;
+  initialTheme: Partial<Theme>;
+  initialQuestions: EditableQuestion[];
+}) {
   const router = useRouter();
   const [tab, setTab] = useState<Tab>('questions');
   const [settings, setSettings] = useState(initialSettings);
@@ -40,6 +51,7 @@ export function QuizEditor({ quizId, initialSettings, initialTheme, initialQuest
   const [importing, setImporting] = useState(false);
   const [creating, setCreating] = useState(false);
   const [createIssues, setCreateIssues] = useState<string[]>([]);
+  const [newTeam, setNewTeam] = useState('');
 
   // ---- autosave: debounce, one request at a time, retry on failure ----
   const latest = useRef({ settings, theme, questions });
@@ -59,9 +71,15 @@ export function QuizEditor({ quizId, initialSettings, initialTheme, initialQuest
         const { settings: s, theme: t, questions: qs } = latest.current;
         try {
           if (d.meta) {
+            const cleanTeams = s.teams.map((x) => x.trim()).filter(Boolean);
             await api(`/api/admin/quizzes/${quizId}`, {
               method: 'PATCH',
-              json: { ...s, title: s.title.trim() || 'Untitled quiz', roll_number_label: s.roll_number_label.trim() || 'Roll number / USN', theme: sanitizeTheme(t) },
+              json: {
+                ...s,
+                title: s.title.trim() || 'Untitled quiz',
+                teams: cleanTeams,
+                theme: sanitizeTheme(t),
+              },
             });
           }
           if (d.questions) await api(`/api/admin/quizzes/${quizId}/questions`, { method: 'PUT', json: { questions: qs } });
@@ -112,7 +130,10 @@ export function QuizEditor({ quizId, initialSettings, initialTheme, initialQuest
     touch('questions');
   };
 
-  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }), useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }));
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+  );
   const onDragEnd = (e: DragEndEvent) => {
     if (!e.over || e.active.id === e.over.id) return;
     const from = questions.findIndex((q) => q.id === e.active.id);
@@ -120,7 +141,10 @@ export function QuizEditor({ quizId, initialSettings, initialTheme, initialQuest
     updateQuestions(arrayMove(questions, from, to));
   };
 
-  const issues = useMemo(() => validateQuiz(questions), [questions]);
+  const issues = useMemo(
+    () => validateQuiz(questions, { teamMode: settings.team_mode, teams: settings.teams }),
+    [questions, settings.team_mode, settings.teams],
+  );
   const issuesFor = (id: string) => issues.filter((i) => i.questionId === id);
 
   const duplicate = (q: EditableQuestion, at: number) => {
@@ -132,17 +156,20 @@ export function QuizEditor({ quizId, initialSettings, initialTheme, initialQuest
     updateQuestions(questions.filter((x) => x.id !== q.id));
   };
 
-  const createSession = async () => {
+  const publishLink = async () => {
     setCreating(true);
     setCreateIssues([]);
     try {
       clearTimeout(timer.current);
-      await flush(); // make sure the server has the latest version
+      await flush(); // ensure latest settings & questions are saved first
       const s = await api<{ id: string }>('/api/admin/sessions', { method: 'POST', json: { quizId } });
       router.push(`/admin/sessions/${s.id}`);
     } catch (e) {
-      if (e instanceof ApiError && e.code === 'quiz_invalid') setCreateIssues(((e.data?.issues ?? []) as { message: string }[]).map((i) => i.message));
-      else setCreateIssues([e instanceof Error ? e.message : 'Could not create session']);
+      if (e instanceof ApiError && e.code === 'quiz_invalid') {
+        setCreateIssues(((e.data?.issues ?? []) as { message: string }[]).map((i) => i.message));
+      } else {
+        setCreateIssues([e instanceof Error ? e.message : 'Could not publish link']);
+      }
       setCreating(false);
     }
   };
@@ -151,12 +178,42 @@ export function QuizEditor({ quizId, initialSettings, initialTheme, initialQuest
   const secs = settings.duration_seconds % 60;
   const setDuration = (m: number, s: number) => updateSettings({ duration_seconds: Math.max(30, Math.min(3600, m * 60 + s)) });
 
-  const sample = questions[0] ?? { ...newQuestion(), text: 'What does CPU stand for?', options: ['Central Processing Unit', 'Computer Personal Unit', 'Central Program Utility', 'Core Processing Unit'].map((t) => ({ id: crypto.randomUUID(), text: t, is_correct: false })) };
+  const addTeam = () => {
+    const t = newTeam.trim();
+    if (!t) return;
+    if (settings.teams.some((x) => x.trim().toLowerCase() === t.toLowerCase())) {
+      setNewTeam('');
+      return;
+    }
+    updateSettings({ teams: [...settings.teams, t] });
+    setNewTeam('');
+  };
+
+  const renameTeam = (idx: number, val: string) => {
+    updateSettings({ teams: settings.teams.map((t, i) => (i === idx ? val : t)) });
+  };
+
+  const deleteTeam = (idx: number) => {
+    updateSettings({ teams: settings.teams.filter((_, i) => i !== idx) });
+  };
+
+  const sample =
+    questions[0] ?? {
+      ...newQuestion(),
+      text: 'What does CPU stand for?',
+      options: ['Central Processing Unit', 'Computer Personal Unit', 'Central Program Utility', 'Core Processing Unit'].map((t) => ({
+        id: crypto.randomUUID(),
+        text: t,
+        is_correct: false,
+      })),
+    };
 
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-center gap-3">
-        <Link href="/admin" className="btn-ghost">← Quizzes</Link>
+        <Link href="/admin" className="btn-ghost">
+          ← Quizzes
+        </Link>
         <input
           value={settings.title}
           onChange={(e) => updateSettings({ title: e.target.value })}
@@ -164,25 +221,45 @@ export function QuizEditor({ quizId, initialSettings, initialTheme, initialQuest
           aria-label="Quiz title"
           className="field min-w-[200px] flex-1 border-transparent bg-transparent text-xl font-bold hover:border-slate-700"
         />
-        <span className={`badge ${status === 'saved' ? 'bg-emerald-500/20 text-emerald-300' : status === 'error' ? 'bg-red-500/20 text-red-300' : 'bg-amber-500/20 text-amber-300'}`} role="status" aria-live="polite">
+        <span
+          className={`badge ${
+            status === 'saved' ? 'bg-emerald-500/20 text-emerald-300' : status === 'error' ? 'bg-red-500/20 text-red-300' : 'bg-amber-500/20 text-amber-300'
+          }`}
+          role="status"
+          aria-live="polite"
+        >
           {status === 'saved' && '✓ Saved'}
           {status === 'saving' && 'Saving…'}
           {status === 'dirty' && 'Unsaved changes…'}
           {status === 'error' && `Error: ${saveError}. Retrying…`}
         </span>
-        <button className="btn-primary" onClick={createSession} disabled={creating}>▶ Create session</button>
+        <button className="btn-primary" onClick={publishLink} disabled={creating}>
+          {creating ? 'Publishing…' : '🔗 Publish link'}
+        </button>
       </div>
 
       {createIssues.length > 0 && (
         <div role="alert" className="rounded-xl border border-amber-500/40 bg-amber-500/10 p-4 text-sm text-amber-100">
-          <p className="font-semibold">Fix these before creating a session:</p>
-          <ul className="mt-1 list-disc pl-5">{createIssues.map((m, i) => <li key={i}>{m}</li>)}</ul>
+          <p className="font-semibold">Fix these before publishing a link:</p>
+          <ul className="mt-1 list-disc pl-5">
+            {createIssues.map((m, i) => (
+              <li key={i}>{m}</li>
+            ))}
+          </ul>
         </div>
       )}
 
       <div className="flex gap-1 border-b border-slate-800" role="tablist">
         {(['questions', 'settings', 'theme'] as const).map((t) => (
-          <button key={t} role="tab" aria-selected={tab === t} onClick={() => setTab(t)} className={`-mb-px border-b-2 px-4 py-2 text-sm font-semibold capitalize ${tab === t ? 'border-violet-500 text-white' : 'border-transparent text-slate-400 hover:text-slate-200'}`}>
+          <button
+            key={t}
+            role="tab"
+            aria-selected={tab === t}
+            onClick={() => setTab(t)}
+            className={`-mb-px border-b-2 px-4 py-2 text-sm font-semibold capitalize ${
+              tab === t ? 'border-violet-500 text-white' : 'border-transparent text-slate-400 hover:text-slate-200'
+            }`}
+          >
             {t === 'questions' ? `Questions (${questions.length})` : t}
           </button>
         ))}
@@ -192,11 +269,21 @@ export function QuizEditor({ quizId, initialSettings, initialTheme, initialQuest
         <div className="space-y-4">
           {issues.length > 0 && (
             <div className="rounded-xl border border-amber-500/40 bg-amber-500/10 p-3 text-sm text-amber-100" role="status">
-              <p className="font-semibold">{issues.length} thing{issues.length > 1 ? 's' : ''} to fix before this quiz can run</p>
+              <p className="font-semibold">
+                {issues.length} thing{issues.length > 1 ? 's' : ''} to fix before publishing a link
+              </p>
               <ul className="mt-1 list-disc pl-5">
                 {issues.slice(0, 6).map((i, k) => (
                   <li key={k}>
-                    {i.questionId ? <a className="underline" href={`#q-${i.questionId}`}>{i.message}</a> : i.message}
+                    {i.questionId ? (
+                      <a className="underline" href={`#q-${i.questionId}`}>
+                        {i.message}
+                      </a>
+                    ) : (
+                      <button type="button" className="underline" onClick={() => setTab('settings')}>
+                        {i.message}
+                      </button>
+                    )}
                   </li>
                 ))}
                 {issues.length > 6 && <li>…and {issues.length - 6} more</li>}
@@ -223,8 +310,12 @@ export function QuizEditor({ quizId, initialSettings, initialTheme, initialQuest
           </DndContext>
           {questions.length === 0 && <p className="panel text-center text-slate-400">No questions yet. Add your first one.</p>}
           <div className="flex flex-wrap gap-3">
-            <button className="btn-primary" onClick={() => updateQuestions([...questions, newQuestion()])}>+ Add question</button>
-            <button className="btn-secondary" onClick={() => setImporting(true)}>⬆ Import from CSV</button>
+            <button className="btn-primary" onClick={() => updateQuestions([...questions, newQuestion()])}>
+              + Add question
+            </button>
+            <button className="btn-secondary" onClick={() => setImporting(true)}>
+              ⬆ Import from CSV
+            </button>
           </div>
         </div>
       )}
@@ -234,41 +325,165 @@ export function QuizEditor({ quizId, initialSettings, initialTheme, initialQuest
           <section className="panel space-y-4">
             <h3 className="font-bold text-white">General</h3>
             <div>
-              <label className="label" htmlFor="desc">Description</label>
-              <textarea id="desc" rows={3} maxLength={1000} className="field" value={settings.description ?? ''} onChange={(e) => updateSettings({ description: e.target.value || null })} />
+              <label className="label" htmlFor="desc">
+                Description
+              </label>
+              <textarea
+                id="desc"
+                rows={3}
+                maxLength={1000}
+                className="field"
+                value={settings.description ?? ''}
+                onChange={(e) => updateSettings({ description: e.target.value || null })}
+              />
             </div>
             <div>
-              <span className="label">Total time for the whole quiz (30 s to 60 min)</span>
+              <span className="label">Time limit per student (30 s to 60 min)</span>
               <div className="flex items-center gap-2">
-                <input type="number" min={0} max={60} aria-label="Minutes" className="field w-24" value={mins} onChange={(e) => setDuration(Number(e.target.value) || 0, secs)} /> <span className="text-slate-400">min</span>
-                <input type="number" min={0} max={59} aria-label="Seconds" className="field w-24" value={secs} onChange={(e) => setDuration(mins, Math.min(59, Number(e.target.value) || 0))} /> <span className="text-slate-400">sec</span>
+                <input
+                  type="number"
+                  min={0}
+                  max={60}
+                  aria-label="Minutes"
+                  className="field w-24"
+                  value={mins}
+                  onChange={(e) => setDuration(Number(e.target.value) || 0, secs)}
+                />{' '}
+                <span className="text-slate-400">min</span>
+                <input
+                  type="number"
+                  min={0}
+                  max={59}
+                  aria-label="Seconds"
+                  className="field w-24"
+                  value={secs}
+                  onChange={(e) => setDuration(mins, Math.min(59, Number(e.target.value) || 0))}
+                />{' '}
+                <span className="text-slate-400">sec</span>
               </div>
+              <p className="mt-1 text-xs text-slate-400">Each student&apos;s personal countdown starts when they press Start.</p>
             </div>
           </section>
+
           <section className="panel space-y-4">
-            <h3 className="font-bold text-white">Participants</h3>
+            <h3 className="font-bold text-white">Participant details</h3>
+            <Toggle
+              label="Require email"
+              hint="Enforces one attempt per email address and lets a student resume mid-attempt."
+              checked={settings.email_required}
+              onChange={(v) => updateSettings({ email_required: v })}
+            />
+
             <div>
-              <label className="label" htmlFor="roll">Roll number</label>
-              <select id="roll" className="field" value={settings.roll_number_mode} onChange={(e) => updateSettings({ roll_number_mode: e.target.value as QuizSettings['roll_number_mode'] })}>
-                <option value="off">Off, name only</option>
-                <option value="optional">Optional</option>
-                <option value="required">Required (must be unique)</option>
+              <label className="label" htmlFor="teamMode">
+                Team field
+              </label>
+              <select
+                id="teamMode"
+                className="field"
+                value={settings.team_mode}
+                onChange={(e) => updateSettings({ team_mode: e.target.value as TeamMode })}
+              >
+                <option value="list">Dropdown (choose from team list)</option>
+                <option value="free">Free text</option>
+                <option value="off">Off</option>
               </select>
             </div>
-            {settings.roll_number_mode !== 'off' && (
-              <div>
-                <label className="label" htmlFor="rolllabel">Roll number label</label>
-                <input id="rolllabel" className="field" maxLength={60} value={settings.roll_number_label} onChange={(e) => updateSettings({ roll_number_label: e.target.value })} />
+
+            {settings.team_mode === 'list' && (
+              <div className="space-y-2 rounded-xl border border-slate-800 bg-slate-950/60 p-3">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-semibold uppercase tracking-wide text-slate-400">
+                    Teams ({settings.teams.filter((t) => t.trim()).length})
+                  </span>
+                </div>
+                {settings.teams.length === 0 && (
+                  <p className="text-xs text-amber-300">Add at least one team name for the student dropdown.</p>
+                )}
+                <div className="max-h-56 space-y-2 overflow-y-auto">
+                  {settings.teams.map((team, idx) => (
+                    <div key={idx} className="flex items-center gap-2">
+                      <input
+                        className="field py-1.5 text-sm"
+                        value={team}
+                        maxLength={80}
+                        aria-label={`Team ${idx + 1}`}
+                        onChange={(e) => renameTeam(idx, e.target.value)}
+                      />
+                      <button
+                        type="button"
+                        className="btn-ghost px-2.5 py-1.5 text-xs text-red-300"
+                        onClick={() => deleteTeam(idx)}
+                        aria-label={`Delete team ${team}`}
+                      >
+                        ✕
+                      </button>
+                    </div>
+                  ))}
+                </div>
+                <div className="flex gap-2 pt-1">
+                  <input
+                    className="field py-1.5 text-sm"
+                    placeholder="Add a team name (e.g. Team Alpha)"
+                    maxLength={80}
+                    value={newTeam}
+                    onChange={(e) => setNewTeam(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        addTeam();
+                      }
+                    }}
+                  />
+                  <button type="button" className="btn-secondary shrink-0 px-3 py-1.5 text-sm" onClick={addTeam}>
+                    + Add
+                  </button>
+                </div>
               </div>
             )}
-            <Toggle label="Allow late join" hint="Students can join after the quiz started and get the remaining time." checked={settings.allow_late_join} onChange={(v) => updateSettings({ allow_late_join: v })} />
           </section>
+
           <section className="panel space-y-4 lg:col-span-2">
-            <h3 className="font-bold text-white">Behaviour</h3>
-            <Toggle label="Shuffle questions" hint="Different order per student, stable if they rejoin." checked={settings.shuffle_questions} onChange={(v) => updateSettings({ shuffle_questions: v })} />
-            <Toggle label="Shuffle options" hint="Answer options appear in a different order per student." checked={settings.shuffle_options} onChange={(v) => updateSettings({ shuffle_options: v })} />
-            <Toggle label="Live top 10 on the LED screen" hint="Show a live top 10 on the presenter view while the quiz runs." checked={settings.show_live_leaderboard} onChange={(v) => updateSettings({ show_live_leaderboard: v })} />
-            <Toggle label="Show answers after reveal" hint="Students see a review with the correct answers once the leaderboard is revealed." checked={settings.show_answers_after_reveal} onChange={(v) => updateSettings({ show_answers_after_reveal: v })} />
+            <h3 className="font-bold text-white">Scoring &amp; behaviour</h3>
+            <div className="max-w-md">
+              <label className="label" htmlFor="scoreVis">
+                When students see their score
+              </label>
+              <select
+                id="scoreVis"
+                className="field"
+                value={settings.score_visibility}
+                onChange={(e) => updateSettings({ score_visibility: e.target.value as ScoreVisibility })}
+              >
+                <option value="after_publish">After results are published</option>
+                <option value="immediate">Immediately (rank shown after results are published)</option>
+                <option value="never">Never (thank-you message only)</option>
+              </select>
+            </div>
+            <Toggle
+              label="Shuffle questions"
+              hint="Different order per student, stable if they refresh or resume."
+              checked={settings.shuffle_questions}
+              onChange={(v) => updateSettings({ shuffle_questions: v })}
+            />
+            <Toggle
+              label="Shuffle options"
+              hint="Answer options appear in a different order per student."
+              checked={settings.shuffle_options}
+              onChange={(v) => updateSettings({ shuffle_options: v })}
+            />
+            <Toggle
+              label="Show live leaderboard on the screen"
+              hint="Show a live top 10 next to the QR code on the presenter screen, updating as submissions arrive."
+              checked={settings.show_live_leaderboard}
+              onChange={(v) => updateSettings({ show_live_leaderboard: v })}
+            />
+            <Toggle
+              label="Show answers after reveal"
+              hint="Students see an answer review with correct answers once results are published."
+              checked={settings.show_answers_after_reveal}
+              onChange={(v) => updateSettings({ show_answers_after_reveal: v })}
+            />
           </section>
         </div>
       )}

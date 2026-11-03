@@ -23,23 +23,12 @@ export default async function PrintResultsPage({ params }: { params: Promise<{ s
   if (!session) notFound();
   session = await syncSession(session);
 
-  if (session.status !== 'ended' && session.status !== 'revealed') {
-    return (
-      <div className="space-y-4">
-        <PrintToolbar sessionId={sessionId} />
-        <div className="panel text-center text-slate-300">
-          Results will appear here once the quiz has ended.
-        </div>
-      </div>
-    );
-  }
-
   const results = await buildResults(session);
   const theme = resolveTheme(session.quizzes.theme);
   const eventTitle = theme.eventTitle || session.quizzes.title;
   const dateStr = eventDate(session.started_at ?? session.created_at);
   const maxScore = results.snapshot.questions.reduce((acc, q) => acc + q.points, 0);
-  const showRoll = session.quizzes.roll_number_mode !== 'off' || results.rows.some((r) => r.rollNumber);
+  const showRoll = results.rows.some((r) => !!(r.rollNumber && r.rollNumber.trim()));
   const top3 = results.rows.slice(0, 3);
 
   return (
@@ -62,19 +51,23 @@ export default async function PrintResultsPage({ params }: { params: Promise<{ s
               <img src={theme.logoUrl} alt="" className="ml-auto mb-2 max-h-12 max-w-[140px] object-contain" />
             )}
             <div className="font-semibold text-slate-900">Date: {dateStr}</div>
-            <div>Join code: <span className="font-mono font-bold">{session.join_code}</span></div>
+            <div>
+              Join code: <span className="font-mono font-bold">{session.join_code}</span>
+            </div>
           </div>
         </header>
 
         {/* Summary strip */}
         <section className="mt-5 grid grid-cols-4 gap-3 rounded-lg border border-slate-200 bg-slate-50 p-4 text-center">
           <div>
-            <div className="text-[11px] font-bold uppercase tracking-wider text-slate-500">Participants</div>
+            <div className="text-[11px] font-bold uppercase tracking-wider text-slate-500">Submitted</div>
             <div className="text-xl font-extrabold text-slate-900">{results.summary.total}</div>
           </div>
           <div>
             <div className="text-[11px] font-bold uppercase tracking-wider text-slate-500">Questions</div>
-            <div className="text-xl font-extrabold text-slate-900">{results.totalQuestions} ({maxScore} pts)</div>
+            <div className="text-xl font-extrabold text-slate-900">
+              {results.totalQuestions} ({maxScore} pts)
+            </div>
           </div>
           <div>
             <div className="text-[11px] font-bold uppercase tracking-wider text-slate-500">Average Score</div>
@@ -94,15 +87,20 @@ export default async function PrintResultsPage({ params }: { params: Promise<{ s
               {top3.map((r) => {
                 const style = PODIUM_BADGE[r.rank] ?? PODIUM_BADGE[3];
                 return (
-                  <div key={r.participantId} className={`rounded-xl border-2 p-4 ${style.ring} ${style.bg} break-inside-avoid`}>
+                  <div key={r.participantId} className={`break-inside-avoid rounded-xl border-2 p-4 ${style.ring} ${style.bg}`}>
                     <div className="flex items-center justify-between">
                       <span className="text-xs font-extrabold uppercase tracking-wider text-slate-700">{style.label}</span>
-                      <span className="text-2xl" aria-hidden>{style.medal}</span>
+                      <span className="text-2xl" aria-hidden>
+                        {style.medal}
+                      </span>
                     </div>
                     <div className="mt-2 truncate text-lg font-extrabold text-slate-900">{r.name}</div>
+                    {r.team && <div className="truncate text-xs font-semibold text-slate-600">{r.team}</div>}
                     {showRoll && r.rollNumber && <div className="truncate font-mono text-xs text-slate-600">{r.rollNumber}</div>}
                     <div className="mt-2 flex items-baseline justify-between border-t border-slate-200/80 pt-2 text-sm">
-                      <span className="font-extrabold text-slate-900">{r.score} pts <span className="font-normal text-slate-500">({r.correctCount}/{results.totalQuestions})</span></span>
+                      <span className="font-extrabold text-slate-900">
+                        {r.score} pts <span className="font-normal text-slate-500">({r.correctCount}/{results.totalQuestions})</span>
+                      </span>
                       <span className="font-mono text-xs text-slate-600">{formatDuration(r.timeTakenMs, true)}</span>
                     </div>
                   </div>
@@ -116,13 +114,14 @@ export default async function PrintResultsPage({ params }: { params: Promise<{ s
         <section className="mt-7">
           <h2 className="mb-2 text-sm font-bold uppercase tracking-wider text-slate-600">Full Ranked Standings</h2>
           {results.rows.length === 0 ? (
-            <p className="py-8 text-center text-sm text-slate-500">No participants recorded for this session.</p>
+            <p className="py-8 text-center text-sm text-slate-500">No submitted attempts recorded yet.</p>
           ) : (
             <table className="w-full border-collapse text-left text-xs">
               <thead>
                 <tr className="border-b-2 border-slate-900 text-[11px] uppercase tracking-wider text-slate-600">
                   <th className="py-2 pr-3">Rank</th>
                   <th className="py-2 pr-3">Name</th>
+                  <th className="py-2 pr-3">Team</th>
                   {showRoll && <th className="py-2 pr-3">Roll No.</th>}
                   <th className="py-2 pr-3 text-right">Score</th>
                   <th className="py-2 pr-3 text-right">Correct</th>
@@ -134,6 +133,7 @@ export default async function PrintResultsPage({ params }: { params: Promise<{ s
                   <tr key={r.participantId} className={`break-inside-avoid ${r.rank <= 3 ? 'bg-amber-50/40 font-semibold' : ''}`}>
                     <td className="py-2 pr-3 font-mono font-bold text-slate-900">#{r.rank}</td>
                     <td className="py-2 pr-3 text-slate-900">{r.name}</td>
+                    <td className="py-2 pr-3 text-slate-700">{r.team ?? '–'}</td>
                     {showRoll && <td className="py-2 pr-3 font-mono text-slate-700">{r.rollNumber ?? '–'}</td>}
                     <td className="py-2 pr-3 text-right font-mono font-bold text-slate-900">{r.score}</td>
                     <td className="py-2 pr-3 text-right font-mono text-slate-700">
@@ -150,4 +150,3 @@ export default async function PrintResultsPage({ params }: { params: Promise<{ s
     </div>
   );
 }
-
