@@ -60,3 +60,4 @@ export const POST = handler<{ code: string }>(async (req, { code }) => {
     serverNow: Date.now(),
   };
 });
+

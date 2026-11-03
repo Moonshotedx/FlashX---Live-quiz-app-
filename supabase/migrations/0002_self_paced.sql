@@ -28,3 +28,4 @@ create unique index if not exists participants_session_email_uq
 
 create index if not exists participants_expiry_idx
   on participants (session_id, ends_at) where submitted_at is null;
+

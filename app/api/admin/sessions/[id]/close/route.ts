@@ -23,3 +23,4 @@ export const POST = handler<{ id: string }>(async (_req, { id }) => {
   await broadcast(id, 'status', { status: 'ended' });
   return { ok: true, status: 'ended' };
 });
+
