@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 500 150" role="img" aria-label="FlashX by Xcelerator">
+<!-- Text uses Space Grotesk. Load that font on the page, or convert text to outlines in a design tool before using this file outside the app. -->
+<rect width="500" height="150" fill="#F7F6F2"/>
+<g transform="translate(15 15) scale(1.2)"><line x1="16" y1="16" x2="84" y2="84" stroke="#0B0B14" stroke-width="15" stroke-linecap="square"/><polygon points="76,4 32,50 52,50 24,96 72,44 52,44" fill="none" stroke="#F7F6F2" stroke-width="9" stroke-linejoin="round"/><polygon points="76,4 32,50 52,50 24,96 72,44 52,44" fill="#FFC300" stroke="#0B0B14" stroke-width="2.5" stroke-linejoin="round"/></g>
+<text x="150" y="98" font-family="'Space Grotesk', system-ui, sans-serif" font-weight="700" font-size="92" letter-spacing="-3" textLength="330" lengthAdjust="spacingAndGlyphs" fill="#0B0B14">Flash<tspan fill="#0B0B14">X</tspan></text>
+<line x1="318" y1="127" x2="346" y2="127" stroke="#9A9AA6" stroke-width="2"/>
+<text x="478" y="134" text-anchor="end" font-family="'Space Grotesk', system-ui, sans-serif" font-size="20" letter-spacing="1" fill="#4A4A58">by <tspan font-weight="700" fill="#0B0B14">Xcelerator</tspan></text>
+</svg>
