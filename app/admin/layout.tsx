@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { authClient, isAdminUser } from '@/lib/server/auth';
 import { SignOutButton } from '@/components/admin/SignOutButton';
+import { FlashXLogo } from '@/components/brand/FlashXLogo';
 
 export const dynamic = 'force-dynamic';
 
@@ -28,8 +29,8 @@ export default async function AdminLayout({ children }: { children: React.ReactN
     <div className="min-h-screen bg-slate-950 text-slate-100 print:min-h-0 print:bg-white print:text-black">
       <header className="no-print sticky top-0 z-30 border-b border-slate-800 bg-slate-950/90 backdrop-blur">
         <div className="mx-auto flex max-w-6xl items-center justify-between px-4 py-3">
-          <Link href="/admin" className="flex items-center gap-2 text-lg font-bold text-white">
-            <span>🎯</span> Live Quiz
+          <Link href="/admin" className="flex items-center" aria-label="FlashX by Xcelerator, quizzes">
+            <FlashXLogo variant="dark" size="sm" byline={false} />
           </Link>
           <div className="flex items-center gap-3 text-sm text-slate-400">
             <span className="hidden sm:inline">{user.email}</span>

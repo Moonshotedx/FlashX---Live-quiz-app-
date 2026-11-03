@@ -1,6 +1,7 @@
 'use client';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ThemeScope } from '@/components/ThemeScope';
+import { FlashXBadge, markVariantForText } from '@/components/brand/FlashXLogo';
 import { QuestionScreen, type SaveState } from './QuestionScreen';
 import { useServerClock } from '@/lib/use-server-clock';
 import { subscribeToSession } from '@/lib/realtime';
@@ -522,9 +523,17 @@ export function StudentApp({ code }: { code: string }) {
     }
   }
 
+  // Subtle brand footer on every screen except the questions, which stay uncluttered. The quiz's own branding stays primary.
+  const showPoweredBy = booted && !!info && state?.phase !== 'answering';
+
   return (
-    <ThemeScope theme={theme} className="min-h-[100dvh]">
+    <ThemeScope theme={theme} className={`relative min-h-[100dvh] ${showPoweredBy ? 'pb-8' : ''}`}>
       {body}
+      {showPoweredBy && (
+        <footer className="pointer-events-none absolute inset-x-0 bottom-2 flex justify-center text-[11px] opacity-60">
+          <FlashXBadge variant={markVariantForText(theme.textColor)} prefix="Powered by" />
+        </footer>
+      )}
     </ThemeScope>
   );
 }

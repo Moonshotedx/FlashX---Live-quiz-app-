@@ -2,6 +2,7 @@
 import { Suspense, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { supabaseBrowser } from '@/lib/supabase-browser';
+import { FlashXLogo } from '@/components/brand/FlashXLogo';
 
 function LoginForm() {
   const router = useRouter();
@@ -28,10 +29,10 @@ function LoginForm() {
 
   return (
     <form onSubmit={submit} className="panel w-full max-w-sm space-y-4">
-      <div className="text-center">
-        <div className="text-4xl">🎯</div>
-        <h1 className="mt-2 text-2xl font-bold text-white">Live Quiz Admin</h1>
-        <p className="text-sm text-slate-400">Sign in to manage quizzes and run live sessions.</p>
+      <div className="flex flex-col items-center gap-3 text-center">
+        <FlashXLogo variant="dark" size="md" />
+        <h1 className="sr-only">Admin sign in</h1>
+        <p className="text-sm text-slate-400">Sign in to manage quizzes and view responses.</p>
       </div>
       <div>
         <label className="label" htmlFor="email">Email</label>

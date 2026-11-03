@@ -2,6 +2,7 @@
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
+import { FlashXLogo } from '@/components/brand/FlashXLogo';
 
 export default function Landing() {
   const router = useRouter();
@@ -16,7 +17,9 @@ export default function Landing() {
         }}
         className="w-full max-w-sm space-y-5 text-center"
       >
-        <div className="text-6xl">🎯</div>
+        <div className="flex justify-center pb-2">
+          <FlashXLogo variant="dark" size="lg" />
+        </div>
         <h1 className="text-3xl font-extrabold">Join the quiz</h1>
         <p className="opacity-80">Scan the QR code on the screen, or type the join code.</p>
         <input

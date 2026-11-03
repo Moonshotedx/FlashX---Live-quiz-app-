@@ -53,7 +53,7 @@ export function buildCsv(session: SessionWithQuiz, r: Results) {
 export async function buildXlsx(session: SessionWithQuiz, r: Results) {
   const { default: ExcelJS } = await import('exceljs');
   const wb = new ExcelJS.Workbook();
-  wb.creator = 'Live Quiz';
+  wb.creator = 'FlashX by Xcelerator';
   const GREEN = 'FFBBF7D0';
   const RED = 'FFFECACA';
   const headerStyle = (row: import('exceljs').Row) => {

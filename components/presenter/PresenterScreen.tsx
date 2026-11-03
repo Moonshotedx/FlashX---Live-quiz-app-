@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
 import { motion } from 'framer-motion';
 import { LeaderboardReveal, FullLeaderboard, TeamLeaderboard } from './Leaderboard';
+import { FlashXBadge, markVariantForText } from '@/components/brand/FlashXLogo';
 import { visibleCount } from '@/lib/reveal';
 import type { LeaderboardSummary, RankedRow, RevealMode, SessionStatus, TeamRankRow, Theme } from '@/lib/types';
 
@@ -160,6 +161,18 @@ function OpenScreen({ data, joinUrl, preview }: { data: PresenterData; joinUrl: 
 
 /** Everything drawn on the 1920x1080 stage, purely from props. */
 export function PresenterScreen(p: Props) {
+  return (
+    <div className="relative h-full w-full">
+      <Screen {...p} />
+      {/* Small corner brand. The event's own branding stays primary. */}
+      <div className="pointer-events-none absolute bottom-[4px] right-[28px] text-[20px] opacity-60">
+        <FlashXBadge variant={markVariantForText(p.data.theme.textColor)} />
+      </div>
+    </div>
+  );
+}
+
+function Screen(p: Props) {
   const { data } = p;
   const title = data.theme.eventTitle || data.quizTitle;
 
