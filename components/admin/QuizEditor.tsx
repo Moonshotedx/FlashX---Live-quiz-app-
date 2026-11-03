@@ -11,6 +11,7 @@ import type { QuizRow, ScoreVisibility, TeamMode, Theme } from '@/lib/types';
 import { QuestionCard, newQuestion } from './QuestionCard';
 import { ThemeEditor } from './ThemeEditor';
 import { ImportModal } from './ImportModal';
+import { QuickBuildModal } from './QuickBuildModal';
 
 export type QuizSettings = Pick<
   QuizRow,
@@ -49,6 +50,7 @@ export function QuizEditor({
   const [status, setStatus] = useState<SaveStatus>('saved');
   const [saveError, setSaveError] = useState('');
   const [importing, setImporting] = useState(false);
+  const [quickBuilding, setQuickBuilding] = useState(false);
   const [creating, setCreating] = useState(false);
   const [createIssues, setCreateIssues] = useState<string[]>([]);
   const [newTeam, setNewTeam] = useState('');
@@ -308,10 +310,20 @@ export function QuizEditor({
               </div>
             </SortableContext>
           </DndContext>
-          {questions.length === 0 && <p className="panel text-center text-slate-400">No questions yet. Add your first one.</p>}
+          {questions.length === 0 && (
+            <p className="panel text-center text-slate-400">
+              No questions yet. Add your first one, or paste a whole set with <strong className="text-slate-200">Quick Build</strong>.
+            </p>
+          )}
           <div className="flex flex-wrap gap-3">
             <button className="btn-primary" onClick={() => updateQuestions([...questions, newQuestion()])}>
               + Add question
+            </button>
+            <button className="btn-secondary" onClick={() => setQuickBuilding(true)}>
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" className="text-amber-300" aria-hidden="true">
+                <path d="M13 2L4 14h7l-2 8 11-12h-7l2-8z" />
+              </svg>
+              Quick Build
             </button>
             <button className="btn-secondary" onClick={() => setImporting(true)}>
               ⬆ Import from CSV
@@ -491,6 +503,13 @@ export function QuizEditor({
       {tab === 'theme' && <ThemeEditor theme={theme} onChange={updateTheme} sampleQuestion={sample} />}
 
       {importing && <ImportModal onClose={() => setImporting(false)} onImport={(qs) => updateQuestions([...questions, ...qs])} />}
+      {quickBuilding && (
+        <QuickBuildModal
+          existingCount={questions.length}
+          onClose={() => setQuickBuilding(false)}
+          onApply={(qs, mode) => updateQuestions(mode === 'replace' ? qs : [...questions, ...qs])}
+        />
+      )}
     </div>
   );
 }
