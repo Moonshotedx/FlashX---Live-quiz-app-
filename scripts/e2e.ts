@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import ExcelJS from 'exceljs';
 import { createServerClient } from '@supabase/ssr';
 
-const BASE = (process.env.BASE_URL ?? 'http://localhost:3000').replace(/\/$/, '');
+const BASE = (process.argv[2] ?? process.env.BASE_URL ?? 'http://localhost:3000').replace(/\/$/, '');
 
 async function createAdminCookieHeader(email: string, password: string): Promise<string> {
   const jar = new Map<string, string>();
