@@ -144,11 +144,9 @@ describe('Scoring, timing, ranking, and 5-student manual verification', () => {
     assert.deepEqual(res, { score: 2, correct: 1 });
   });
 
-  it('computes time_taken_ms = submitted_at - max(started_at, joined_at)', () => {
-    // Joined in lobby before start
-    assert.equal(timeTakenMs('2026-11-05T10:01:30.000Z', '2026-11-05T10:00:00.000Z', '2026-11-05T09:58:00.000Z'), 90_000);
-    // Late joiner after start
-    assert.equal(timeTakenMs('2026-11-05T10:01:30.000Z', '2026-11-05T10:00:00.000Z', '2026-11-05T10:01:00.000Z'), 30_000);
+  it('computes personal time_taken_ms = submitted_at - participant.started_at', () => {
+    assert.equal(timeTakenMs('2026-11-05T10:01:30.000Z', '2026-11-05T10:00:00.000Z'), 90_000);
+    assert.equal(timeTakenMs('2026-11-05T10:15:30.000Z', '2026-11-05T10:15:00.000Z'), 30_000);
   });
 
   it('ranks 5 sample students matching manual check (score desc, time asc, submitted_at asc, duplicate name suffix)', () => {
@@ -331,6 +329,16 @@ describe('Quiz validation, CSV import/export, Excel (.xlsx) workbook, profanity,
           startedAt: '2026-11-05T10:00:00.000Z',
           submittedAt: '2026-11-05T10:00:25.400Z',
           autoSubmitted: false,
+        },
+      ],
+      teamRows: [
+        {
+          rank: 1,
+          team: 'Team Alpha',
+          membersSubmitted: 1,
+          totalScore: 2,
+          averageScore: 2,
+          bestIndividual: { name: 'Aarav', score: 2 },
         },
       ],
       participants: [],

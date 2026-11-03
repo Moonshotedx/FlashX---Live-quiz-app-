@@ -1,6 +1,6 @@
 import { HttpError } from './api';
 import { db, unwrap } from './db';
-import { GRACE_MS, loadSession, syncSession } from './session';
+import { loadSession, syncSession } from './session';
 import type { ParticipantRow, QuizRow, SessionRow, Snapshot } from '../types';
 
 export interface PlayContext {
@@ -10,17 +10,16 @@ export interface PlayContext {
 }
 
 const SESSION_COLS =
-  'id,quiz_id,join_code,status,duration_seconds,started_at,ends_at,ended_at,revealed_at,reveal_mode,reveal_step,created_at';
+  'id,quiz_id,join_code,status,duration_seconds,started_at,ends_at,ended_at,closes_at,revealed_at,reveal_mode,reveal_step,created_at';
 
 /**
- * quiz_snapshot is immutable for a given (session.id, started_at) once the quiz starts.
+ * quiz_snapshot is immutable for a given (session.id, started_at) once the link is published.
  * Caching it avoids transferring the full snapshot JSONB from Postgres on every single answer save.
  */
 const snapshotCache = new Map<string, Snapshot>();
 
 async function ensureSnapshot(session: SessionRow): Promise<Snapshot | null> {
-  if (!session.started_at) return null;
-  const key = `${session.id}:${session.started_at}`;
+  const key = `${session.id}:${session.started_at ?? ''}`;
   const cached = snapshotCache.get(key);
   if (cached) return cached;
   const row = unwrap<{ quiz_snapshot: Snapshot | null } | null>(
@@ -58,8 +57,8 @@ export async function playContext(
   const { sessions, ...participant } = data as unknown as ParticipantRow & { sessions: SessionRow & { quizzes: QuizRow } };
   const { quizzes, ...session } = sessions;
 
-  // Lazy end-of-quiz check: first request after ends_at + grace finalises the session (coalesced).
-  if (!retried && session.status === 'live' && session.ends_at && Date.now() > new Date(session.ends_at).getTime() + GRACE_MS) {
+  // Lazy auto-close check when closes_at has passed.
+  if (!retried && session.status === 'live' && session.closes_at && Date.now() >= new Date(session.closes_at).getTime()) {
     await syncSession(await loadSession(session.id));
     return playContext(code, token, opts, true);
   }

@@ -1,31 +1,76 @@
 import { handler, HttpError } from '@/lib/server/api';
 import { db, unwrap } from '@/lib/server/db';
 import { deviceToken, playContext } from '@/lib/server/play';
-import { fetchParticipants, ranked } from '@/lib/server/session';
+import { fetchParticipants, finalizeExpiredAttempts, GRACE_MS, ranked } from '@/lib/server/session';
 import { normalizeJoinCode } from '@/lib/join-code';
-import type { RankedRow } from '@/lib/types';
+import type { ParticipantRow, RankedRow } from '@/lib/types';
 
 export const dynamic = 'force-dynamic';
 
-// Short cache so hundreds of phones fetching results right after the reveal do not each rebuild the ranking.
+// Short cache so hundreds of phones fetching results right after publish do not each rebuild the ranking.
 const rankCache = new Map<string, { at: number; rows: RankedRow[] }>();
 
-/** Own score, rank and (optionally) answer review. The only participant route that exposes correct answers, only once revealed. */
+/**
+ * Own score, rank and (optionally) answer review.
+ * - Before `revealed`: allowed ONLY when `score_visibility === 'immediate'` AND the participant has submitted,
+ *   returning numeric score/correctCount ONLY (no rank, no answer review, zero correctness data).
+ * - Once `revealed` AND submitted: returns score, rank, and (if enabled) answer review.
+ * - Never returns anything if `score_visibility === 'never'`.
+ */
 export const GET = handler<{ code: string }>(async (req, { code }) => {
-  const { participant, session, quiz } = await playContext(normalizeJoinCode(code), deviceToken(req), { snapshot: true });
+  const ctx = await playContext(normalizeJoinCode(code), deviceToken(req), { snapshot: true });
+  let participant = ctx.participant;
+  const { session, quiz } = ctx;
+
   if (participant.is_removed) throw new HttpError(403, 'removed', 'You have been removed');
-  if (session.status !== 'revealed') throw new HttpError(403, 'not_revealed', 'Results are not available yet');
+
+  if (
+    participant.started_at &&
+    !participant.submitted_at &&
+    participant.ends_at &&
+    Date.now() > new Date(participant.ends_at).getTime() + GRACE_MS
+  ) {
+    await finalizeExpiredAttempts(session.id, { participantId: participant.id, snapshot: session.quiz_snapshot });
+    participant = unwrap<ParticipantRow>(
+      await db().from('participants').select('*').eq('id', participant.id).single(),
+      'reload participant',
+    );
+  }
+
+  if (!participant.submitted_at) {
+    throw new HttpError(403, 'not_submitted', 'Submit your quiz first');
+  }
+  if (quiz.score_visibility === 'never') {
+    throw new HttpError(403, 'scores_hidden', 'Scores are not shown for this quiz');
+  }
+
+  const snapshot = session.quiz_snapshot ?? { questions: [] };
+  const maxScore = snapshot.questions.reduce((a, q) => a + q.points, 0);
+
+  if (session.status !== 'revealed') {
+    if (quiz.score_visibility !== 'immediate') {
+      throw new HttpError(403, 'not_revealed', 'Results are not available yet');
+    }
+    return {
+      rank: null,
+      total: 0,
+      score: participant.score,
+      correctCount: participant.correct_count,
+      totalQuestions: snapshot.questions.length,
+      maxScore,
+      timeTakenMs: participant.time_taken_ms,
+    };
+  }
 
   const cacheKey = `${session.id}:${session.revealed_at ?? ''}`;
   let hit = rankCache.get(cacheKey);
   if (!hit || Date.now() - hit.at > 2000) {
+    await finalizeExpiredAttempts(session.id, { snapshot });
     hit = { at: Date.now(), rows: ranked(await fetchParticipants(session.id)) };
     if (rankCache.size > 50) rankCache.clear();
     rankCache.set(cacheKey, hit);
   }
   const me = hit.rows.find((r) => r.participantId === participant.id);
-  const snapshot = session.quiz_snapshot ?? { questions: [] };
-  const maxScore = snapshot.questions.reduce((a, q) => a + q.points, 0);
 
   let review: unknown;
   if (quiz.show_answers_after_reveal) {

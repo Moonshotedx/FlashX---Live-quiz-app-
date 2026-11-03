@@ -1,6 +1,6 @@
-import { fetchParticipants, fetchSessionAnswers, ranked, type SessionWithQuiz } from './session';
-import { summarize } from '../scoring';
-import type { LeaderboardSummary, ParticipantRow, RankedRow, Snapshot } from '../types';
+import { fetchParticipants, fetchSessionAnswers, finalizeExpiredAttempts, ranked, type SessionWithQuiz } from './session';
+import { rankTeams, summarize } from '../scoring';
+import type { LeaderboardSummary, ParticipantRow, RankedRow, Snapshot, TeamRankRow } from '../types';
 
 export interface QuestionStat {
   questionId: string;
@@ -16,6 +16,7 @@ export interface QuestionStat {
 export interface Results {
   snapshot: Snapshot;
   rows: RankedRow[];
+  teamRows: TeamRankRow[];
   participants: ParticipantRow[];
   /** participantId -> questionId -> optionId */
   answers: Map<string, Map<string, string>>;
@@ -24,14 +25,15 @@ export interface Results {
   totalQuestions: number;
 }
 
-/** Everything the results table, exports and print view need. Only meaningful once the quiz has ended. */
+/** Everything the results table, exports and print view need. Updates live as submissions arrive. */
 export async function buildResults(session: SessionWithQuiz): Promise<Results> {
   const snapshot = session.quiz_snapshot ?? { questions: [] };
+  await finalizeExpiredAttempts(session.id, { snapshot });
   const [participants, rawAnswers] = await Promise.all([fetchParticipants(session.id), fetchSessionAnswers(session.id)]);
-  const active = new Set(participants.map((p) => p.id));
+  const submittedIds = new Set(participants.filter((p) => !p.is_removed && !!p.submitted_at).map((p) => p.id));
   const answers = new Map<string, Map<string, string>>();
   for (const a of rawAnswers) {
-    if (!active.has(a.participant_id)) continue;
+    if (!submittedIds.has(a.participant_id)) continue;
     const m = answers.get(a.participant_id) ?? new Map<string, string>();
     m.set(a.question_id, a.option_id);
     answers.set(a.participant_id, m);
@@ -63,7 +65,17 @@ export async function buildResults(session: SessionWithQuiz): Promise<Results> {
     };
   });
   const rows = ranked(participants);
-  return { snapshot: { questions }, rows, participants, answers, questionStats, summary: summarize(rows, questions.length), totalQuestions: questions.length };
+  const teamRows = rankTeams(rows);
+  return {
+    snapshot: { questions },
+    rows,
+    teamRows,
+    participants,
+    answers,
+    questionStats,
+    summary: summarize(rows, questions.length),
+    totalQuestions: questions.length,
+  };
 }
 
 /** Date used in export filenames, in the event time zone. */

@@ -1,4 +1,6 @@
-import type { LeaderboardSummary, ParticipantRow, RankedRow, Snapshot } from './types';
+import type { LeaderboardSummary, ParticipantRow, RankedRow, Snapshot, TeamRankRow } from './types';
+
+export const GRACE_MS = 3000;
 
 /** Score a participant's answers against the frozen snapshot. Server side only. */
 export function scoreAnswers(snapshot: Snapshot, answers: { question_id: string; option_id: string }[]) {
@@ -19,10 +21,18 @@ export function scoreAnswers(snapshot: Snapshot, answers: { question_id: string;
   return { score, correct };
 }
 
-/** time_taken_ms = submitted_at - max(started_at, joined_at) */
-export function timeTakenMs(submittedAt: string | Date, startedAt: string | Date, joinedAt: string | Date) {
-  const start = Math.max(new Date(startedAt).getTime(), new Date(joinedAt).getTime());
-  return Math.max(0, new Date(submittedAt).getTime() - start);
+/** True when a participant has pressed Start, has not submitted yet, and is within their personal timer + grace. */
+export function attemptOpen(
+  p: Pick<ParticipantRow, 'started_at' | 'ends_at' | 'submitted_at'> & { is_removed?: boolean },
+  now = Date.now(),
+): boolean {
+  if (p.is_removed || !p.started_at || !p.ends_at || p.submitted_at) return false;
+  return now <= new Date(p.ends_at).getTime() + GRACE_MS;
+}
+
+/** Personal attempt duration: submitted_at - participant.started_at. */
+export function timeTakenMs(submittedAt: string | Date, participantStartedAt: string | Date) {
+  return Math.max(0, new Date(submittedAt).getTime() - new Date(participantStartedAt).getTime());
 }
 
 type Rankable = Pick<
@@ -82,5 +92,42 @@ export function summarize(rows: RankedRow[], totalQuestions: number): Leaderboar
     highestScore: rows.reduce((m, r) => Math.max(m, r.score), 0),
     fastestPerfect: perfect ? { name: perfect.name, timeTakenMs: perfect.timeTakenMs ?? 0 } : null,
   };
+}
+
+/**
+ * Aggregate submitted individual rankings by team.
+ * Ranked by average score desc, tie-broken by total score desc, then team name asc.
+ */
+export function rankTeams(rows: RankedRow[]): TeamRankRow[] {
+  const groups = new Map<
+    string,
+    { label: string; membersSubmitted: number; totalScore: number; bestIndividual: { name: string; score: number } | null }
+  >();
+  for (const r of rows) {
+    const raw = r.team?.trim();
+    if (!raw) continue;
+    const key = raw.toLowerCase();
+    const g = groups.get(key) ?? { label: raw, membersSubmitted: 0, totalScore: 0, bestIndividual: null };
+    g.membersSubmitted += 1;
+    g.totalScore += r.score;
+    // `rows` is already ordered best-first by rankParticipants, so the first member seen is best on score + tie-breakers.
+    if (!g.bestIndividual || r.score > g.bestIndividual.score) {
+      g.bestIndividual = { name: r.name, score: r.score };
+    }
+    groups.set(key, g);
+  }
+  const sorted = [...groups.values()].sort((a, b) => {
+    const avgA = a.totalScore / a.membersSubmitted;
+    const avgB = b.totalScore / b.membersSubmitted;
+    return avgB - avgA || b.totalScore - a.totalScore || a.label.localeCompare(b.label);
+  });
+  return sorted.map((g, i) => ({
+    rank: i + 1,
+    team: g.label,
+    membersSubmitted: g.membersSubmitted,
+    totalScore: g.totalScore,
+    averageScore: Math.round((g.totalScore / g.membersSubmitted) * 100) / 100,
+    bestIndividual: g.bestIndividual,
+  }));
 }
 

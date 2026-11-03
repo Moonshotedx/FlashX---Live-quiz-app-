@@ -1,3 +1,5 @@
+import type { TeamMode } from './types';
+
 export interface EditableOption {
   id: string;
   text: string;
@@ -16,10 +18,19 @@ export interface QuizIssue {
   message: string;
 }
 
-/** Rules a quiz must satisfy before a session can be created. */
-export function validateQuiz(questions: EditableQuestion[]): QuizIssue[] {
+/** Rules a quiz must satisfy before a link can be published. */
+export function validateQuiz(
+  questions: EditableQuestion[],
+  opts?: { teamMode?: TeamMode; teams?: string[] },
+): QuizIssue[] {
   const issues: QuizIssue[] = [];
   if (questions.length < 1) issues.push({ questionIndex: null, message: 'Add at least 1 question.' });
+  if (opts?.teamMode === 'list' && !(opts.teams ?? []).some((t) => t.trim().length > 0)) {
+    issues.push({
+      questionIndex: null,
+      message: 'Add at least 1 team name in Settings (or switch Team field to Off / Free text).',
+    });
+  }
   questions.forEach((q, i) => {
     const n = i + 1;
     const add = (message: string) => issues.push({ questionIndex: i, questionId: q.id, message: `Question ${n}: ${message}` });

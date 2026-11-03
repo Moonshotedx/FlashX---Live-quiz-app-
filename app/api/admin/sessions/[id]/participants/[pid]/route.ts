@@ -7,7 +7,7 @@ import { broadcast, loadOwnedSession } from '@/lib/server/session';
 export const dynamic = 'force-dynamic';
 
 type P = { id: string; pid: string };
-const body = z.object({ name: z.string().trim().min(2).max(30).optional(), removed: z.boolean().optional() });
+const body = z.object({ name: z.string().trim().min(2).max(60).optional(), removed: z.boolean().optional() });
 
 async function guard(id: string, pid: string) {
   const user = await requireAdmin();

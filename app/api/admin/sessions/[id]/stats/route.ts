@@ -1,17 +1,20 @@
 import { handler, HttpError } from '@/lib/server/api';
 import { getAdmin, tokenFromRequest, validPresenterToken } from '@/lib/server/auth';
-import { db, unwrap } from '@/lib/server/db';
-import { fetchParticipants, liveScoreboard, loadSession, ranked, syncSession } from '@/lib/server/session';
-import { summarize } from '@/lib/scoring';
+import { db } from '@/lib/server/db';
+import { fetchParticipants, finalizeExpiredAttempts, liveScoreboard, loadSession, ranked, syncSession } from '@/lib/server/session';
+import { rankTeams, summarize } from '@/lib/scoring';
 import { resolveTheme } from '@/lib/theme';
-import type { LeaderboardSummary, RankedRow } from '@/lib/types';
+import type { LeaderboardSummary, RankedRow, TeamRankRow } from '@/lib/types';
 
 export const dynamic = 'force-dynamic';
 
-const finalCache = new Map<string, { at: number; rows: RankedRow[]; summary: LeaderboardSummary }>();
+const finalCache = new Map<
+  string,
+  { at: number; rows: RankedRow[]; teamRows: TeamRankRow[]; summary: LeaderboardSummary }
+>();
 
 /**
- * Light status payload polled every ~2s by the control room and the presenter view.
+ * Light status payload polled every ~2s by the Responses page and the presenter view.
  * Allowed for any verified admin, or anyone holding the session's presenter token (?t=).
  */
 export const GET = handler<{ id: string }>(async (req, { id }) => {
@@ -22,36 +25,63 @@ export const GET = handler<{ id: string }>(async (req, { id }) => {
 
   let s = await loadSession(id);
   s = await syncSession(s);
+  await finalizeExpiredAttempts(id, { snapshot: s.quiz_snapshot });
   const quiz = s.quizzes;
   const full = req.nextUrl.searchParams.get('full') === '1';
 
-  const [joined, submitted, recent] = await Promise.all([
-    db().from('participants').select('id', { count: 'exact', head: true }).eq('session_id', id).eq('is_removed', false),
-    db().from('participants').select('id', { count: 'exact', head: true }).eq('session_id', id).eq('is_removed', false).not('submitted_at', 'is', null),
-    s.status === 'lobby' || s.status === 'live'
-      ? db().from('participants').select('id,display_name').eq('session_id', id).eq('is_removed', false).order('joined_at', { ascending: false }).limit(20)
-      : Promise.resolve({ data: [], error: null }),
+  const [notStartedRes, inProgressRes, submittedRes] = await Promise.all([
+    db()
+      .from('participants')
+      .select('id', { count: 'exact', head: true })
+      .eq('session_id', id)
+      .eq('is_removed', false)
+      .is('started_at', null)
+      .is('submitted_at', null),
+    db()
+      .from('participants')
+      .select('id', { count: 'exact', head: true })
+      .eq('session_id', id)
+      .eq('is_removed', false)
+      .not('started_at', 'is', null)
+      .is('submitted_at', null),
+    db()
+      .from('participants')
+      .select('id', { count: 'exact', head: true })
+      .eq('session_id', id)
+      .eq('is_removed', false)
+      .not('submitted_at', 'is', null),
   ]);
-  if (joined.error) throw new Error(joined.error.message);
-  if (submitted.error) throw new Error(submitted.error.message);
-  unwrap(recent as { data: unknown[] | null; error: { message: string } | null }, 'recent');
+  if (notStartedRes.error) throw new Error(notStartedRes.error.message);
+  if (inProgressRes.error) throw new Error(inProgressRes.error.message);
+  if (submittedRes.error) throw new Error(submittedRes.error.message);
+
+  const notStarted = notStartedRes.count ?? 0;
+  const inProgress = inProgressRes.count ?? 0;
+  const submitted = submittedRes.count ?? 0;
+  const started = inProgress + submitted;
+  const joined = notStarted + started;
 
   let leaderboard: RankedRow[] = [];
+  let teamLeaderboard: TeamRankRow[] = [];
   let summary: LeaderboardSummary | null = null;
   const totalQuestions = s.quiz_snapshot?.questions.length ?? 0;
-  if (s.status === 'revealed' || (s.status === 'ended' && isAdmin)) {
-    const cacheKey = `${id}:${s.ended_at ?? ''}`;
+
+  if (s.status === 'revealed' || isAdmin) {
+    const cacheKey = `${id}:${s.status}`;
     let hit = finalCache.get(cacheKey);
     if (!hit || Date.now() - hit.at > 1500) {
       const rows = ranked(await fetchParticipants(id));
-      hit = { at: Date.now(), rows, summary: summarize(rows, totalQuestions) };
+      const teamRows = rankTeams(rows);
+      hit = { at: Date.now(), rows, teamRows, summary: summarize(rows, totalQuestions) };
       if (finalCache.size > 50) finalCache.clear();
       finalCache.set(cacheKey, hit);
     }
     leaderboard = full || s.reveal_mode === 'full' ? hit.rows : hit.rows.slice(0, 10);
+    teamLeaderboard = hit.teamRows;
     summary = hit.summary;
-  } else if (s.status === 'live' && quiz.show_live_leaderboard) {
+  } else if ((s.status === 'live' || s.status === 'ended') && quiz.show_live_leaderboard) {
     leaderboard = await liveScoreboard(s, 10);
+    teamLeaderboard = rankTeams(leaderboard);
   }
 
   return {
@@ -63,16 +93,21 @@ export const GET = handler<{ id: string }>(async (req, { id }) => {
     joinCode: s.join_code,
     durationSeconds: s.duration_seconds,
     startedAt: s.started_at ? new Date(s.started_at).getTime() : null,
-    endsAt: s.ends_at ? new Date(s.ends_at).getTime() : null,
+    endsAt: null,
     endedAt: s.ended_at ? new Date(s.ended_at).getTime() : null,
-    allowLateJoin: quiz.allow_late_join,
+    closesAt: s.closes_at,
     showLiveLeaderboard: quiz.show_live_leaderboard,
-    joined: joined.count ?? 0,
-    submitted: submitted.count ?? 0,
-    recent: ((recent.data ?? []) as { id: string; display_name: string }[]).map((r) => ({ id: r.id, name: r.display_name })),
+    teamMode: quiz.team_mode,
+    teams: quiz.teams ?? [],
+    notStarted,
+    inProgress,
+    submitted,
+    started,
+    joined,
     totalQuestions,
     reveal: { mode: s.reveal_mode, step: s.reveal_step, at: s.revealed_at ? new Date(s.revealed_at).getTime() : null },
     leaderboard,
+    teamLeaderboard,
     summary,
   };
 });
