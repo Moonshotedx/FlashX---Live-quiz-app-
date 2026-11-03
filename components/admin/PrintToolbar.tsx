@@ -16,3 +16,4 @@ export function PrintToolbar({ sessionId }: { sessionId: string }) {
     </div>
   );
 }
+
