@@ -3,7 +3,7 @@ import { useEffect, useRef } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { revealPlan } from '@/lib/reveal';
 import { formatDuration } from '@/lib/client-api';
-import type { LeaderboardSummary, RankedRow, RevealMode } from '@/lib/types';
+import type { LeaderboardSummary, RankedRow, TeamRankRow } from '@/lib/types';
 
 const MEDAL = {
   1: { label: 'GOLD', bg: 'linear-gradient(180deg,#FDE68A,#F59E0B 55%,#B45309)', glow: '#FBBF24', crown: '👑' },
@@ -26,14 +26,16 @@ function fireConfetti() {
   });
 }
 
-function Row({ row, collectRoll }: { row: RankedRow; collectRoll: boolean }) {
-  const hasRoll = collectRoll && !!row.rollNumber;
+function Row({ row }: { row: RankedRow }) {
+  const subtitle = row.team || null;
   return (
     <div className="flex h-[88px] items-center gap-6 rounded-3xl border-2 border-ink/20 bg-ink/10 px-7 shadow-xl backdrop-blur">
-      <div className="flex h-[64px] w-[64px] shrink-0 items-center justify-center rounded-full bg-primary text-[36px] font-extrabold text-white">{row.rank}</div>
+      <div className="flex h-[64px] w-[64px] shrink-0 items-center justify-center rounded-full bg-primary text-[36px] font-extrabold text-white">
+        {row.rank}
+      </div>
       <div className="min-w-0 flex-1">
-        <div className={`truncate font-bold leading-tight ${hasRoll ? 'text-[36px]' : 'text-[42px]'}`}>{row.name}</div>
-        {hasRoll && <div className="truncate text-[22px] leading-tight opacity-70">{row.rollNumber}</div>}
+        <div className={`truncate font-bold leading-tight ${subtitle ? 'text-[36px]' : 'text-[42px]'}`}>{row.name}</div>
+        {subtitle && <div className="truncate text-[22px] leading-tight opacity-75">{subtitle}</div>}
       </div>
       <div className="text-right">
         <div className="text-[48px] font-extrabold leading-none text-accent">{row.score}</div>
@@ -43,7 +45,19 @@ function Row({ row, collectRoll }: { row: RankedRow; collectRoll: boolean }) {
   );
 }
 
-function PodiumPlace({ rank, row, shown, drumroll, collectRoll, animate }: { rank: 1 | 2 | 3; row?: RankedRow; shown: boolean; drumroll: boolean; collectRoll: boolean; animate: boolean }) {
+function PodiumPlace({
+  rank,
+  row,
+  shown,
+  drumroll,
+  animate,
+}: {
+  rank: 1 | 2 | 3;
+  row?: RankedRow;
+  shown: boolean;
+  drumroll: boolean;
+  animate: boolean;
+}) {
   const m = MEDAL[rank];
   const h = PILLAR_H[rank];
   if (!row) return <div style={{ width: 300 }} />;
@@ -60,7 +74,7 @@ function PodiumPlace({ rank, row, shown, drumroll, collectRoll, animate }: { ran
           >
             <div className="text-[64px] leading-none">{m.crown}</div>
             <div className="mt-1 truncate text-[44px] font-extrabold leading-tight">{row.name}</div>
-            {collectRoll && row.rollNumber && <div className="truncate text-[24px] opacity-70">{row.rollNumber}</div>}
+            {row.team && <div className="truncate text-[24px] opacity-75">{row.team}</div>}
             <div className="mt-1 text-[52px] font-extrabold leading-none" style={{ color: m.glow }}>
               {row.score} <span className="text-[26px] opacity-80">pts</span>
             </div>
@@ -100,7 +114,6 @@ export function LeaderboardReveal({
   count,
   summary,
   title,
-  collectRoll,
   animate = true,
   confetti = true,
 }: {
@@ -108,7 +121,6 @@ export function LeaderboardReveal({
   count: number; // visible items of the plan
   summary: LeaderboardSummary | null;
   title: string;
-  collectRoll: boolean;
   animate?: boolean;
   confetti?: boolean;
 }) {
@@ -135,7 +147,7 @@ export function LeaderboardReveal({
   if (!n) {
     return (
       <div className="flex h-full flex-col items-center justify-center">
-        <div className="text-[110px] font-extrabold">No participants</div>
+        <div className="text-[110px] font-extrabold">No submissions yet</div>
         <div className="mt-4 text-[44px] opacity-70">{title}</div>
       </div>
     );
@@ -163,7 +175,7 @@ export function LeaderboardReveal({
                       animate={{ y: 0, opacity: 1 }}
                       transition={{ type: 'spring', stiffness: 130, damping: 16 }}
                     >
-                      <Row row={row} collectRoll={collectRoll} />
+                      <Row row={row} />
                     </motion.div>
                   )}
                 </AnimatePresence>
@@ -187,7 +199,6 @@ export function LeaderboardReveal({
               row={byRank(rank)}
               shown={visible.has(rank)}
               drumroll={(listDone || !listRanks.length) && nextRank === rank}
-              collectRoll={collectRoll}
               animate={animate}
             />
           );
@@ -202,10 +213,14 @@ export function LeaderboardReveal({
             transition={{ delay: animate ? 1.2 : 0 }}
             className="absolute bottom-[26px] left-[70px] right-[70px] flex items-center justify-around rounded-3xl bg-ink/10 py-4 backdrop-blur"
           >
-            <Stat label="Participants" value={String(summary.total)} />
+            <Stat label="Submitted" value={String(summary.total)} />
             <Stat label="Average score" value={String(summary.averageScore)} />
             <Stat label="Highest score" value={String(summary.highestScore)} />
-            <Stat label="Fastest perfect" value={summary.fastestPerfect ? `${formatDuration(summary.fastestPerfect.timeTakenMs, true)}` : '–'} sub={summary.fastestPerfect?.name} />
+            <Stat
+              label="Fastest perfect"
+              value={summary.fastestPerfect ? `${formatDuration(summary.fastestPerfect.timeTakenMs, true)}` : '–'}
+              sub={summary.fastestPerfect?.name}
+            />
           </motion.div>
         )}
       </AnimatePresence>
@@ -224,7 +239,17 @@ function Stat({ label, value, sub }: { label: string; value: string; sub?: strin
 }
 
 /** Auto scrolling full leaderboard, 15 per page (two columns). */
-export function FullLeaderboard({ rows, page, pages, title, collectRoll }: { rows: RankedRow[]; page: number; pages: number; title: string; collectRoll: boolean }) {
+export function FullLeaderboard({
+  rows,
+  page,
+  pages,
+  title,
+}: {
+  rows: RankedRow[];
+  page: number;
+  pages: number;
+  title: string;
+}) {
   const slice = rows.slice(page * 15, page * 15 + 15);
   const left = slice.slice(0, 8);
   const right = slice.slice(8);
@@ -246,14 +271,77 @@ export function FullLeaderboard({ rows, page, pages, title, collectRoll }: { row
           {[left, right].map((col, i) => (
             <div key={i} className="flex flex-col gap-[12px]">
               {col.map((r) => (
-                <Row key={r.participantId} row={r} collectRoll={collectRoll} />
+                <Row key={r.participantId} row={r} />
               ))}
             </div>
           ))}
         </motion.div>
       </AnimatePresence>
       <div className="absolute bottom-[24px] left-0 right-0 text-center text-[32px] opacity-70">
-        Page {page + 1} of {pages} · {rows.length} participants
+        Page {page + 1} of {pages} · {rows.length} submitted
+      </div>
+    </div>
+  );
+}
+
+/** Team leaderboard screen on the presenter stage (ranked by average score, tie-broken by total score). */
+export function TeamLeaderboard({ rows, title }: { rows: TeamRankRow[]; title: string }) {
+  const top = rows.slice(0, 10);
+  const left = top.slice(0, 5);
+  const right = top.slice(5, 10);
+
+  if (!top.length) {
+    return (
+      <div className="flex h-full flex-col items-center justify-center">
+        <div className="text-[96px] font-extrabold">No team submissions yet</div>
+        <div className="mt-4 text-[44px] opacity-70">{title}</div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="relative h-full w-full">
+      <div className="absolute left-0 right-0 top-[36px] text-center">
+        <div className="text-[34px] font-semibold uppercase tracking-[0.4em] opacity-70">{title}</div>
+        <div className="text-[92px] font-extrabold leading-none">🏅 Team Standings</div>
+      </div>
+
+      <div
+        className={`absolute left-[80px] right-[80px] top-[210px] grid gap-x-10 ${
+          right.length > 0 ? 'grid-cols-2' : 'mx-auto max-w-[1100px] grid-cols-1'
+        }`}
+      >
+        {[left, ...(right.length > 0 ? [right] : [])].map((col, idx) => (
+          <div key={idx} className="flex flex-col gap-[18px]">
+            {col.map((t) => {
+              const medal = t.rank === 1 ? '👑' : t.rank === 2 ? '🥈' : t.rank === 3 ? '🥉' : null;
+              return (
+                <motion.div
+                  layout
+                  key={t.team}
+                  initial={{ opacity: 0, y: 30 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  className="flex h-[132px] items-center gap-6 rounded-3xl border-2 border-ink/20 bg-ink/10 px-8 shadow-xl backdrop-blur"
+                >
+                  <div className="flex h-[76px] w-[76px] shrink-0 items-center justify-center rounded-full bg-primary text-[40px] font-extrabold text-white">
+                    {medal ?? t.rank}
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate text-[42px] font-extrabold leading-tight">{t.team}</div>
+                    <div className="truncate text-[24px] opacity-75">
+                      {t.membersSubmitted} {t.membersSubmitted === 1 ? 'member' : 'members'} · Total {t.totalScore} pts
+                      {t.bestIndividual ? ` · Top: ${t.bestIndividual.name}` : ''}
+                    </div>
+                  </div>
+                  <div className="text-right">
+                    <div className="text-[56px] font-extrabold leading-none text-accent">{t.averageScore}</div>
+                    <div className="text-[22px] uppercase tracking-wider opacity-70">avg pts</div>
+                  </div>
+                </motion.div>
+              );
+            })}
+          </div>
+        ))}
       </div>
     </div>
   );

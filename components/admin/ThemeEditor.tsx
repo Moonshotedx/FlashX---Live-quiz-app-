@@ -21,7 +21,7 @@ function Color({ label, value, onChange }: { label: string; value: string; onCha
 }
 
 export function ThemeEditor({ theme, onChange, sampleQuestion }: { theme: Theme; onChange: (t: Theme) => void; sampleQuestion: EditableQuestion }) {
-  const [screen, setScreen] = useState<PreviewScreen>('lobby');
+  const [screen, setScreen] = useState<PreviewScreen>('open');
   const [uploading, setUploading] = useState<string | null>(null);
   const [error, setError] = useState('');
   const [saved, setSaved] = useState<Record<string, Theme>>({});
@@ -182,8 +182,16 @@ export function ThemeEditor({ theme, onChange, sampleQuestion }: { theme: Theme;
           <div className="flex flex-wrap items-center justify-between gap-2">
             <h3 className="font-bold text-white">Presenter preview (16:9)</h3>
             <div className="flex gap-1" role="tablist">
-              {(['lobby', 'live', 'leaderboard'] as const).map((s) => (
-                <button key={s} role="tab" aria-selected={screen === s} onClick={() => setScreen(s)} className={`${screen === s ? 'btn-primary' : 'btn-secondary'} px-3 py-1 text-xs capitalize`}>{s}</button>
+              {(
+                [
+                  ['open', 'Open QR'],
+                  ['live', 'Live Top 10'],
+                  ['leaderboard', 'Leaderboard'],
+                ] as const
+              ).map(([s, label]) => (
+                <button key={s} role="tab" aria-selected={screen === s} onClick={() => setScreen(s)} className={`${screen === s ? 'btn-primary' : 'btn-secondary'} px-3 py-1 text-xs`}>
+                  {label}
+                </button>
               ))}
             </div>
           </div>

@@ -61,33 +61,27 @@ export const mockRows: RankedRow[] = MOCK_NAMES.map((name, i) => ({
   autoSubmitted: false,
 }));
 
-export type PreviewScreen = 'lobby' | 'live' | 'leaderboard';
+export type PreviewScreen = 'open' | 'live' | 'leaderboard';
 
 /** 16:9 presenter frame with mock data, rendered with the same components as the real LED screen. */
 export function PresenterPreview({ theme, screen, title }: { theme: Theme; screen: PreviewScreen; title: string }) {
   const base: PresenterData = {
-    status: screen === 'lobby' ? 'lobby' : screen === 'live' ? 'live' : 'revealed',
+    status: screen === 'leaderboard' ? 'revealed' : 'live',
     quizTitle: title,
     theme,
     joinCode: 'ABC234',
     durationSeconds: 300,
-    startedAt: -28_000,
-    endsAt: 272_000,
-    allowLateJoin: true,
-    showLiveLeaderboard: false,
-    joined: 132,
+    showLiveLeaderboard: screen === 'live',
     submitted: 87,
-    recent: MOCK_NAMES.slice(0, 8).map((name, i) => ({ id: `r${i}`, name })),
     leaderboard: mockRows,
-    summary: { total: 132, averageScore: 6.4, highestScore: 10, fastestPerfect: { name: 'Aarav', timeTakenMs: 61_000 } },
+    summary: { total: 87, averageScore: 6.4, highestScore: 10, fastestPerfect: { name: 'Aarav', timeTakenMs: 61_000 } },
     reveal: { mode: 'manual', step: 99, at: 0 },
   };
   return (
     <ThemeScope theme={theme} className="aspect-video w-full overflow-hidden rounded-lg ring-1 ring-slate-700">
       <ScaledStage>
-        <PresenterScreen data={base} now={0} joinUrl="https://quiz.example.com/j/ABC234" revealElapsed={0} manualStep={99} rollCollected={false} preview />
+        <PresenterScreen data={base} joinUrl="https://quiz.example.com/j/ABC234" revealElapsed={0} manualStep={99} preview />
       </ScaledStage>
     </ThemeScope>
   );
 }
-
