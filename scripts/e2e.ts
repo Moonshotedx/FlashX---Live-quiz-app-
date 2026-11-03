@@ -217,9 +217,9 @@ async function main() {
     });
 
     // 6. Join metadata, HTML check, validation checks
-    const joinInfo = await req<{ open: boolean; teamMode: string; teams: string[]; questionCount: number }>(`/api/join/${joinCode}`);
+    const joinInfo = await req<{ isOpen: boolean; teamMode: string; teams: string[]; questionCount: number }>(`/api/join/${joinCode}`);
     assert.equal(joinInfo.status, 200);
-    assert.equal(joinInfo.data.open, true);
+    assert.equal(joinInfo.data.isOpen, true);
     assert.equal(joinInfo.data.questionCount, 3);
     assert.deepEqual(joinInfo.data.teams, ['Team Alpha', 'Team Beta']);
     assertNoAnswerLeak(joinInfo.raw, 'join-info-before-begin', secretOption);
@@ -352,14 +352,14 @@ async function main() {
     assertNoAnswerLeak(s1Sub.raw, 'submit-response', secretOption);
 
     // Same email after submitting is blocked (409 already_submitted)
-    const repeatJoin = await req<{ error: string; code: string }>(`/api/join/${joinCode}`, {
+    const repeatJoin = await req<{ error: string; message: string }>(`/api/join/${joinCode}`, {
       method: 'POST',
       ip: '10.0.2.2',
       body: JSON.stringify({ name: 'Aarav Retry', email: 'aarav@example.com', team: 'Team Alpha' }),
     });
     assert.equal(repeatJoin.status, 409);
-    assert.equal(repeatJoin.data.code, 'already_submitted');
-    assert.equal(repeatJoin.data.error, 'This email has already completed the quiz.');
+    assert.equal(repeatJoin.data.error, 'already_submitted');
+    assert.equal(repeatJoin.data.message, 'This email has already completed the quiz.');
     console.log('✓ One-attempt-per-email: mid-attempt resume & post-submit block verified');
 
     // Finish s2 (4 pts, slower elapsed time than s1)
@@ -372,8 +372,9 @@ async function main() {
     // 9. Expired personal attempt auto-submits with submitted_at = participant.ends_at
     await req(`/api/play/${joinCode}/begin`, { method: 'POST', token: s4.deviceToken, body: '{}' });
     await answer(s4.deviceToken, q1.id, q1.options[0].id); // 2 pts
-    const pastStart = new Date(Date.now() - 130_000).toISOString();
-    const pastEnd = new Date(Date.now() - 10_000).toISOString();
+    const refNow = Date.now();
+    const pastStart = new Date(refNow - 130_000).toISOString();
+    const pastEnd = new Date(refNow - 10_000).toISOString();
     await serviceDb
       .from('participants')
       .update({ started_at: pastStart, ends_at: pastEnd })
@@ -409,13 +410,14 @@ async function main() {
     assert.equal(closeRes.status, 200);
 
     // New student blocked while closed
-    const blockedJoin = await req<{ error: string }>(`/api/join/${joinCode}`, {
+    const blockedJoin = await req<{ error: string; message: string }>(`/api/join/${joinCode}`, {
       method: 'POST',
       ip: '10.0.3.1',
       body: JSON.stringify({ name: 'Late Arrival', email: 'late@example.com', team: 'Team Alpha' }),
     });
     assert.equal(blockedJoin.status, 403);
-    assert.equal(blockedJoin.data.error, 'This quiz is closed.');
+    assert.equal(blockedJoin.data.error, 'closed');
+    assert.equal(blockedJoin.data.message, 'This quiz is closed.');
 
     // Meanwhile s3 (mid-attempt!) can still answer and submit while the link is closed
     await answer(s3.deviceToken, q1.id, q1.options[0].id);
@@ -527,8 +529,8 @@ async function main() {
     assert.equal(resetRes.status, 200);
     const afterReset = await req(`/api/play/${joinCode}/state`, { token: s1.deviceToken });
     assert.equal(afterReset.status, 404, 'Old participant token must 404 after session reset');
-    const reopenCheck = await req<{ open: boolean }>(`/api/join/${joinCode}`);
-    assert.equal(reopenCheck.data.open, true, 'Session must be Open again after reset');
+    const reopenCheck = await req<{ isOpen: boolean }>(`/api/join/${joinCode}`);
+    assert.equal(reopenCheck.data.isOpen, true, 'Session must be Open again after reset');
     console.log('✓ Session reset verified');
   } finally {
     await req(`/api/admin/quizzes/${quizId}`, { method: 'DELETE', cookie: cookie1 });
