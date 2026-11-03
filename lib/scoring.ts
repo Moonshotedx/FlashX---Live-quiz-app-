@@ -28,7 +28,8 @@ export function timeTakenMs(submittedAt: string | Date, startedAt: string | Date
 type Rankable = Pick<
   ParticipantRow,
   'id' | 'display_name' | 'roll_number' | 'score' | 'correct_count' | 'time_taken_ms' | 'submitted_at' | 'auto_submitted' | 'joined_at'
->;
+> &
+  Partial<Pick<ParticipantRow, 'email' | 'team' | 'started_at'>>;
 
 /**
  * Order: score desc, time asc, submitted_at asc. Ranks are unique (1, 2, 3...).
@@ -57,10 +58,13 @@ export function rankParticipants(list: Rankable[]): RankedRow[] {
     rank: i + 1,
     participantId: p.id,
     name: label.get(p.id) ?? p.display_name,
+    email: p.email ?? null,
+    team: p.team ?? null,
     rollNumber: p.roll_number,
     score: p.score,
     correctCount: p.correct_count,
     timeTakenMs: p.time_taken_ms,
+    startedAt: p.started_at ?? null,
     submittedAt: p.submitted_at,
     autoSubmitted: p.auto_submitted,
   }));

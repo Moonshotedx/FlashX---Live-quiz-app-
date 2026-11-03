@@ -45,14 +45,18 @@ export function PhonePreview({ theme, question, title }: { theme: Theme; questio
 }
 
 const MOCK_NAMES = ['Aarav', 'Diya', 'Rahul', 'Sneha', 'Karthik', 'Meera', 'Ishaan', 'Priya', 'Vikram', 'Ananya'];
+const MOCK_TEAMS = ['Team Alpha', 'Team Beta', 'Team Gamma', 'Team Delta'];
 export const mockRows: RankedRow[] = MOCK_NAMES.map((name, i) => ({
   rank: i + 1,
   participantId: `m${i}`,
   name,
+  email: `${name.toLowerCase()}@example.com`,
+  team: MOCK_TEAMS[i % MOCK_TEAMS.length],
   rollNumber: null,
   score: 10 - Math.floor(i / 2),
   correctCount: 10 - Math.floor(i / 2),
   timeTakenMs: 61_000 + i * 4_300,
+  startedAt: null,
   submittedAt: null,
   autoSubmitted: false,
 }));

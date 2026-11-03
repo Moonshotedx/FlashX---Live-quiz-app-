@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import pg from 'pg';
 
@@ -23,9 +23,15 @@ async function main() {
 
   await client.connect();
   try {
-    const sql = readFileSync(join(process.cwd(), 'supabase/migrations/0001_init.sql'), 'utf8');
-    await client.query(sql);
-    console.log('✓ Applied supabase/migrations/0001_init.sql');
+    const dir = join(process.cwd(), 'supabase/migrations');
+    const files = readdirSync(dir)
+      .filter((f) => f.endsWith('.sql'))
+      .sort();
+    for (const file of files) {
+      const sql = readFileSync(join(dir, file), 'utf8');
+      await client.query(sql);
+      console.log(`✓ Applied supabase/migrations/${file}`);
+    }
   } finally {
     await client.end();
   }

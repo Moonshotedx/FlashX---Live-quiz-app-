@@ -35,6 +35,10 @@ export const quizSettingsSchema = z
     show_answers_after_reveal: z.boolean(),
     roll_number_mode: z.enum(['off', 'optional', 'required']),
     roll_number_label: z.string().trim().min(1).max(60),
+    team_mode: z.enum(['off', 'list', 'free']),
+    teams: z.array(z.string().trim().min(1).max(80)).max(100),
+    email_required: z.boolean(),
+    score_visibility: z.enum(['immediate', 'after_publish', 'never']),
     theme: themeSchema,
   })
   .partial();
