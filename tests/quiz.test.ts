@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import ExcelJS from 'exceljs';
 
 import { toPublicQuestions } from '../lib/sanitize';
-import { rankParticipants, scoreAnswers, summarize, timeTakenMs } from '../lib/scoring';
+import { attemptOpen, GRACE_MS, rankParticipants, rankTeams, scoreAnswers, summarize, timeTakenMs } from '../lib/scoring';
 import { validateQuiz } from '../lib/validate-quiz';
 import { parseQuestionCsv, toCsv } from '../lib/csv';
 import { isProfane } from '../lib/profanity';
@@ -57,7 +57,7 @@ const SAMPLE_SNAPSHOT: Snapshot = {
   ],
 };
 
-describe('Security: correct answers never leak before reveal', () => {
+describe('Security: correct answers never leak before reveal & no hardcoded passwords', () => {
   it('strips is_correct and position metadata in toPublicQuestions', () => {
     for (const shuffle of [false, true]) {
       const pub = toPublicQuestions(SAMPLE_SNAPSHOT, {
@@ -103,14 +103,16 @@ describe('Security: correct answers never leak before reveal', () => {
     assert.ok(orders.size > 1, 'Different participants should receive varied shuffled orders');
   });
 
-  it('audits participant routes & pages to guarantee correctness is gated behind status === revealed', () => {
+  it('audits participant routes & pages to guarantee correctness is gated behind status === revealed and submitted', () => {
     const root = process.cwd();
     const preRevealFiles = [
       'app/api/join/[code]/route.ts',
+      'app/api/play/[code]/begin/route.ts',
       'app/api/play/[code]/state/route.ts',
       'app/api/play/[code]/answer/route.ts',
       'app/api/play/[code]/submit/route.ts',
       'app/j/[joinCode]/page.tsx',
+      'components/student/StudentApp.tsx',
       'components/student/QuestionScreen.tsx',
     ];
     for (const rel of preRevealFiles) {
@@ -124,17 +126,86 @@ describe('Security: correct answers never leak before reveal', () => {
     }
     const stateSrc = readFileSync(join(root, 'app/api/play/[code]/state/route.ts'), 'utf8');
     assert.ok(stateSrc.includes('toPublicQuestions('), '/state must sanitize questions via toPublicQuestions');
-    assert.ok(stateSrc.includes("session.status === 'live'"), '/state must only include questions while live');
+    assert.ok(stateSrc.includes("phase === 'answering'"), '/state must only send questions during phase === answering');
 
     const resultSrc = readFileSync(join(root, 'app/api/play/[code]/result/route.ts'), 'utf8');
     assert.ok(
-      resultSrc.includes("session.status !== 'revealed'"),
-      '/result must reject requests unless session.status === revealed',
+      resultSrc.includes('!participant.submitted_at'),
+      '/result must reject participants whose attempt has not been submitted yet',
     );
+    assert.ok(
+      resultSrc.includes("session.status !== 'revealed'"),
+      '/result must gate rank and answer review behind session.status === revealed',
+    );
+    // Ensure correctOptionId is constructed strictly after the session.status !== 'revealed' early return
+    assert.ok(
+      resultSrc.indexOf('correctOptionId') > resultSrc.indexOf("session.status !== 'revealed'"),
+      'correctOptionId must only be constructed after verifying session.status === revealed',
+    );
+  });
+
+  it('verifies hardcoded seed admin password defaults are removed from docs, env template, and scripts', () => {
+    const root = process.cwd();
+    for (const rel of ['.env.example', 'README.md', 'scripts/seed.ts', 'scripts/e2e.ts', 'scripts/loadtest.ts']) {
+      const src = readFileSync(join(root, rel), 'utf8');
+      assert.equal(src.includes('12345678'), false, `${rel} must not contain hardcoded password 12345678`);
+    }
   });
 });
 
-describe('Scoring, timing, ranking, and 5-student manual verification', () => {
+describe('Self-paced personal timers, scoring, ranking, and team rankings', () => {
+  it('enforces attemptOpen personal timer + 3s grace window independently of session close', () => {
+    const t0 = Date.parse('2026-11-05T10:00:00.000Z');
+    const tEnd = Date.parse('2026-11-05T10:05:00.000Z');
+    const startedIso = new Date(t0).toISOString();
+    const endsIso = new Date(tEnd).toISOString();
+
+    // Not started yet -> closed for answers
+    assert.equal(
+      attemptOpen({ is_removed: false, started_at: null, submitted_at: null, ends_at: null }, t0 + 1000),
+      false,
+    );
+    // Started and within personal ends_at -> open
+    assert.equal(
+      attemptOpen({ is_removed: false, started_at: startedIso, submitted_at: null, ends_at: endsIso }, t0 + 60_000),
+      true,
+    );
+    // Inside 3s grace window -> still open
+    assert.equal(
+      attemptOpen({ is_removed: false, started_at: startedIso, submitted_at: null, ends_at: endsIso }, tEnd + GRACE_MS),
+      true,
+    );
+    // Past ends_at + GRACE_MS -> closed
+    assert.equal(
+      attemptOpen({ is_removed: false, started_at: startedIso, submitted_at: null, ends_at: endsIso }, tEnd + GRACE_MS + 1),
+      false,
+    );
+    // Already submitted -> closed even before ends_at
+    assert.equal(
+      attemptOpen({ is_removed: false, started_at: startedIso, submitted_at: new Date(t0 + 20_000).toISOString(), ends_at: endsIso }, t0 + 30_000),
+      false,
+    );
+    // Removed -> closed
+    assert.equal(
+      attemptOpen({ is_removed: true, started_at: startedIso, submitted_at: null, ends_at: endsIso }, t0 + 10_000),
+      false,
+    );
+  });
+
+  it('gives independent personal time_taken_ms to students starting at different wall-clock times', () => {
+    // Student A starts at 10:00:00 and submits at 10:01:30 -> 90s
+    const studentATime = timeTakenMs('2026-11-05T10:01:30.000Z', '2026-11-05T10:00:00.000Z');
+    // Student B starts 15 minutes later at 10:15:00 and submits at 10:15:30 -> 30s (faster personal time!)
+    const studentBTime = timeTakenMs('2026-11-05T10:15:30.000Z', '2026-11-05T10:15:00.000Z');
+    // Expired Student C has submitted_at = participant.ends_at (5 min quiz) -> 300s
+    const expiredStudentTime = timeTakenMs('2026-11-05T10:25:00.000Z', '2026-11-05T10:20:00.000Z');
+
+    assert.equal(studentATime, 90_000);
+    assert.equal(studentBTime, 30_000);
+    assert.equal(expiredStudentTime, 300_000);
+    assert.ok(studentBTime < studentATime);
+  });
+
   it('scores answers accurately with no negative marking and ignores duplicate question entries', () => {
     const res = scoreAnswers(SAMPLE_SNAPSHOT, [
       { question_id: SAMPLE_SNAPSHOT.questions[0].id, option_id: 'aaaa2222-1111-4111-8111-111111111111' }, // +2
@@ -144,20 +215,18 @@ describe('Scoring, timing, ranking, and 5-student manual verification', () => {
     assert.deepEqual(res, { score: 2, correct: 1 });
   });
 
-  it('computes personal time_taken_ms = submitted_at - participant.started_at', () => {
-    assert.equal(timeTakenMs('2026-11-05T10:01:30.000Z', '2026-11-05T10:00:00.000Z'), 90_000);
-    assert.equal(timeTakenMs('2026-11-05T10:15:30.000Z', '2026-11-05T10:15:00.000Z'), 30_000);
-  });
-
   it('ranks 5 sample students matching manual check (score desc, time asc, submitted_at asc, duplicate name suffix)', () => {
     const ranked = rankParticipants([
       {
         id: 'p1',
         display_name: 'Rahul',
+        email: 'rahul1@example.com',
+        team: 'Team Beta',
         roll_number: null,
         score: 4,
         correct_count: 3,
         time_taken_ms: 52_000,
+        started_at: '2026-11-05T10:00:00Z',
         submitted_at: '2026-11-05T10:00:52Z',
         auto_submitted: false,
         joined_at: '2026-11-05T09:58:00Z',
@@ -165,21 +234,27 @@ describe('Scoring, timing, ranking, and 5-student manual verification', () => {
       {
         id: 'p2',
         display_name: 'Aarav',
+        email: 'aarav@example.com',
+        team: 'Team Alpha',
         roll_number: null,
         score: 4,
         correct_count: 3,
         time_taken_ms: 41_000,
-        submitted_at: '2026-11-05T10:00:41Z',
+        started_at: '2026-11-05T10:05:00Z',
+        submitted_at: '2026-11-05T10:05:41Z',
         auto_submitted: false,
-        joined_at: '2026-11-05T09:58:05Z',
+        joined_at: '2026-11-05T10:04:55Z',
       },
       {
         id: 'p3',
         display_name: 'rahul',
+        email: 'rahul2@example.com',
+        team: 'Team Alpha',
         roll_number: null,
         score: 3,
         correct_count: 2,
         time_taken_ms: 35_000,
+        started_at: '2026-11-05T10:00:00Z',
         submitted_at: '2026-11-05T10:00:35Z',
         auto_submitted: false,
         joined_at: '2026-11-05T09:58:10Z',
@@ -187,21 +262,27 @@ describe('Scoring, timing, ranking, and 5-student manual verification', () => {
       {
         id: 'p4',
         display_name: 'Diya',
+        email: 'diya@example.com',
+        team: 'Team Gamma',
         roll_number: null,
         score: 3,
         correct_count: 2,
         time_taken_ms: 35_000,
-        submitted_at: '2026-11-05T10:00:34Z', // submitted 1s earlier on equal score + equal timeTakenMs (late joiner case)
+        started_at: '2026-11-05T09:59:59Z',
+        submitted_at: '2026-11-05T10:00:34Z', // submitted 1s earlier on equal score + equal timeTakenMs
         auto_submitted: false,
         joined_at: '2026-11-05T09:59:59Z',
       },
       {
         id: 'p5',
         display_name: 'Meera',
+        email: 'meera@example.com',
+        team: 'Team Gamma',
         roll_number: null,
         score: 1,
         correct_count: 1,
         time_taken_ms: 300_000,
+        started_at: '2026-11-05T10:00:00Z',
         submitted_at: '2026-11-05T10:05:00Z',
         auto_submitted: true,
         joined_at: '2026-11-05T09:58:20Z',
@@ -225,11 +306,65 @@ describe('Scoring, timing, ranking, and 5-student manual verification', () => {
     assert.equal(summary.averageScore, 3);
     assert.deepEqual(summary.fastestPerfect, { name: 'Aarav', timeTakenMs: 41_000 });
     assert.deepEqual(summarize([], 3), { total: 0, averageScore: 0, highestScore: 0, fastestPerfect: null });
+
+    // Team rankings:
+    // - Team Beta: Rahul (4) -> avg 4.0, total 4
+    // - Team Alpha: Aarav (4) + rahul (2) (3) -> avg 3.5, total 7
+    // - Team Gamma: Diya (3) + Meera (1) -> avg 2.0, total 4
+    const teams = rankTeams(ranked);
+    assert.deepEqual(teams, [
+      {
+        rank: 1,
+        team: 'Team Beta',
+        membersSubmitted: 1,
+        totalScore: 4,
+        averageScore: 4,
+        bestIndividual: { name: 'Rahul', score: 4 },
+      },
+      {
+        rank: 2,
+        team: 'Team Alpha',
+        membersSubmitted: 2,
+        totalScore: 7,
+        averageScore: 3.5,
+        bestIndividual: { name: 'Aarav', score: 4 },
+      },
+      {
+        rank: 3,
+        team: 'Team Gamma',
+        membersSubmitted: 2,
+        totalScore: 4,
+        averageScore: 2,
+        bestIndividual: { name: 'Diya', score: 3 },
+      },
+    ]);
+  });
+
+  it('breaks team average ties by higher total score', () => {
+    const base = {
+      email: 'x@example.com',
+      rollNumber: null,
+      correctCount: 3,
+      timeTakenMs: 30_000,
+      startedAt: '2026-11-05T10:00:00Z',
+      submittedAt: '2026-11-05T10:00:30Z',
+      autoSubmitted: false,
+    };
+    const teams = rankTeams([
+      { ...base, rank: 1, participantId: '1', name: 'Solo', team: 'Solo Squad', score: 3 },
+      { ...base, rank: 2, participantId: '2', name: 'Duo A', team: 'Big Squad', score: 4 },
+      { ...base, rank: 3, participantId: '3', name: 'Duo B', team: 'Big Squad', score: 2 },
+      { ...base, rank: 4, participantId: '4', name: 'NoTeam', team: null, score: 10 },
+    ]);
+    // Both teams have averageScore = 3, but Big Squad has totalScore = 6 vs Solo Squad totalScore = 3
+    assert.equal(teams.length, 2);
+    assert.equal(teams[0].team, 'Big Squad');
+    assert.equal(teams[1].team, 'Solo Squad');
   });
 });
 
 describe('Quiz validation, CSV import/export, Excel (.xlsx) workbook, profanity, join codes, reveal & themes', () => {
-  it('validates quizzes before session creation', () => {
+  it('validates quizzes (including team dropdown list requirement) before publishing link', () => {
     assert.equal(validateQuiz([]).length, 1);
     const bad = validateQuiz([
       {
@@ -245,7 +380,7 @@ describe('Quiz validation, CSV import/export, Excel (.xlsx) workbook, profanity,
     ]);
     assert.ok(bad.length >= 3);
 
-    const good = validateQuiz([
+    const validQuestions = [
       {
         id: 'q1',
         text: 'Valid question?',
@@ -256,8 +391,11 @@ describe('Quiz validation, CSV import/export, Excel (.xlsx) workbook, profanity,
           { id: 'o2', text: 'No', is_correct: false },
         ],
       },
-    ]);
-    assert.deepEqual(good, []);
+    ];
+    assert.deepEqual(validateQuiz(validQuestions), []);
+    assert.equal(validateQuiz(validQuestions, { teamMode: 'list', teams: [] }).length, 1);
+    assert.deepEqual(validateQuiz(validQuestions, { teamMode: 'list', teams: ['Team Alpha'] }), []);
+    assert.deepEqual(validateQuiz(validQuestions, { teamMode: 'free', teams: [] }), []);
   });
 
   it('parses CSV question imports and guards CSV exports against formula injection', () => {
@@ -375,6 +513,13 @@ describe('Quiz validation, CSV import/export, Excel (.xlsx) workbook, profanity,
     assert.equal(csv.body.includes('Roll number'), false, 'Roll number must be omitted when empty for every row');
     assert.ok(csv.body.includes('Rank,Name,Email,Team,Score,Correct count,Total questions,Time taken (seconds),Started at,Submitted at,Auto submitted'));
     assert.ok(csv.body.includes('1,Aarav,aarav@example.com,Team Alpha,2,1,3,25.4,2026-11-05T10:00:00.000Z'));
+
+    // Also verify Roll number IS included when non-empty on legacy rows
+    const csvWithRoll = buildCsv(fakeSession, {
+      ...results,
+      rows: [{ ...results.rows[0], rollNumber: '1AY23CS001' }],
+    });
+    assert.ok(csvWithRoll.body.includes('Rank,Name,Email,Team,Roll number,Score'));
 
     const xlsx = await buildXlsx(fakeSession, results);
     assert.equal(xlsx.filename, 'AIT-Tech-Quiz_2026-11-05_results.xlsx');

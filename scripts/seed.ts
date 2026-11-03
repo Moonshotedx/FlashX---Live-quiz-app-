@@ -70,25 +70,33 @@ async function main() {
     auth: { persistSession: false, autoRefreshToken: false },
   });
 
-  // 1. Collect admin accounts to create/update
+  // 1. Collect admin accounts to create/update (passwords come strictly from env vars)
   const admins = new Map<string, string>();
   const primaryEmail = process.env.SEED_ADMIN_EMAIL?.trim().toLowerCase();
   const primaryPassword = process.env.SEED_ADMIN_PASSWORD?.trim();
-  if (primaryEmail && primaryPassword) {
+  if (primaryEmail) {
+    if (!primaryPassword) {
+      throw new Error('Missing SEED_ADMIN_PASSWORD environment variable for SEED_ADMIN_EMAIL');
+    }
     admins.set(primaryEmail, primaryPassword);
   }
 
-  const extraPassword = (process.env.SEED_EXTRA_PASSWORD ?? '12345678').trim();
-  const extraEmails = (process.env.SEED_EXTRA_ADMINS ?? 'anirban@xcelerator.in,debadrita@xcelerator.in')
+  const extraEmails = (process.env.SEED_EXTRA_ADMINS ?? '')
     .split(',')
     .map((e) => e.trim().toLowerCase())
     .filter(Boolean);
-  for (const email of extraEmails) {
-    if (!admins.has(email)) admins.set(email, extraPassword);
+  if (extraEmails.length > 0) {
+    const extraPassword = process.env.SEED_EXTRA_PASSWORD?.trim();
+    if (!extraPassword) {
+      throw new Error('Missing SEED_EXTRA_PASSWORD environment variable for SEED_EXTRA_ADMINS');
+    }
+    for (const email of extraEmails) {
+      if (!admins.has(email)) admins.set(email, extraPassword);
+    }
   }
 
   if (admins.size === 0) {
-    throw new Error('Provide SEED_ADMIN_EMAIL + SEED_ADMIN_PASSWORD (or SEED_EXTRA_ADMINS)');
+    throw new Error('Provide SEED_ADMIN_EMAIL and SEED_ADMIN_PASSWORD in your environment before running seed');
   }
 
   // List existing auth users to stay idempotent
@@ -145,13 +153,19 @@ async function main() {
   // 3. Seed "Demo Tech Quiz" if not already present
   const { data: existingQuiz, error: findErr } = await supabase
     .from('quizzes')
-    .select('id, title')
+    .select('id, title, team_mode, teams')
     .eq('title', 'Demo Tech Quiz')
     .limit(1)
     .maybeSingle();
-  if (findErr) throw new Error(`Failed checking quizzes (did you run 0001_init.sql?): ${findErr.message}`);
+  if (findErr) throw new Error(`Failed checking quizzes (did you run 0001_init.sql and 0002_self_paced.sql?): ${findErr.message}`);
 
   if (existingQuiz) {
+    if (existingQuiz.team_mode === 'list' && (!existingQuiz.teams || existingQuiz.teams.length === 0)) {
+      await supabase
+        .from('quizzes')
+        .update({ teams: ['Team Alpha', 'Team Beta', 'Team Gamma', 'Team Delta'] })
+        .eq('id', existingQuiz.id);
+    }
     console.log(`✓ Sample quiz already exists: "${existingQuiz.title}" (${existingQuiz.id})`);
     return;
   }
@@ -166,15 +180,19 @@ async function main() {
     .insert({
       owner_id: ownerId!,
       title: 'Demo Tech Quiz',
-      description: '10 general tech questions — 5 minutes on the clock!',
+      description: '10 general tech questions — 5 minutes per student!',
       duration_seconds: 300,
       shuffle_questions: false,
       shuffle_options: false,
       allow_late_join: true,
       show_live_leaderboard: false,
       show_answers_after_reveal: true,
-      roll_number_mode: 'optional',
+      roll_number_mode: 'off',
       roll_number_label: 'Roll number / USN',
+      team_mode: 'list',
+      teams: ['Team Alpha', 'Team Beta', 'Team Gamma', 'Team Delta'],
+      email_required: true,
+      score_visibility: 'after_publish',
       theme,
     })
     .select('id')

@@ -5,11 +5,19 @@ import { createServerClient } from '@supabase/ssr';
 
 const BASE = (process.argv[2] ?? process.env.BASE_URL ?? 'http://localhost:3000').replace(/\/$/, '');
 
+function requireEnv(name: string, fallback?: string): string {
+  const val = (process.env[name] ?? (fallback ? process.env[fallback] : undefined))?.trim();
+  if (!val) {
+    throw new Error(`Missing required environment variable: ${name}${fallback ? ` (or ${fallback})` : ''}`);
+  }
+  return val;
+}
+
 async function createAdminCookieHeader(email: string, password: string): Promise<string> {
   const jar = new Map<string, string>();
   const sb = createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    requireEnv('NEXT_PUBLIC_SUPABASE_URL'),
+    requireEnv('NEXT_PUBLIC_SUPABASE_ANON_KEY'),
     {
       cookies: {
         getAll: () => [...jar.entries()].map(([name, value]) => ({ name, value })),
@@ -26,9 +34,8 @@ function assertNoAnswerLeak(payload: unknown, label: string, secretAnswerText: s
   const raw = typeof payload === 'string' ? payload : JSON.stringify(payload);
   assert.equal(raw.includes('is_correct'), false, `[LEAK] ${label} exposed is_correct`);
   assert.equal(raw.includes('correctOptionId'), false, `[LEAK] ${label} exposed correctOptionId`);
-  // Secret answer text should not appear before live, and during live must have no correctness flag
-  if (label.includes('before-live')) {
-    assert.equal(raw.includes(secretAnswerText), false, `[LEAK] ${label} exposed question options before live`);
+  if (label.includes('before-begin')) {
+    assert.equal(raw.includes(secretAnswerText), false, `[LEAK] ${label} exposed question options before student pressed Start`);
   }
 }
 
@@ -59,7 +66,13 @@ async function req<T = Record<string, unknown>>(
 }
 
 async function main() {
-  console.log(`Running E2E acceptance suite against ${BASE} ...`);
+  console.log(`Running self-paced E2E acceptance suite against ${BASE} ...`);
+
+  const supabaseUrl = requireEnv('NEXT_PUBLIC_SUPABASE_URL');
+  const anonKey = requireEnv('NEXT_PUBLIC_SUPABASE_ANON_KEY');
+  const serviceKey = requireEnv('SUPABASE_SERVICE_ROLE_KEY');
+  const admin1Email = requireEnv('E2E_ADMIN_EMAIL', 'SEED_ADMIN_EMAIL');
+  const admin1Pass = requireEnv('E2E_ADMIN_PASSWORD', 'SEED_ADMIN_PASSWORD');
 
   // 1. Server clock sync
   const timeRes = await req<{ now: number }>('/api/time');
@@ -74,55 +87,47 @@ async function main() {
   assert.ok(unauthPage.status === 307 || unauthPage.status === 302, 'Expected redirect on /admin');
 
   const { createClient } = await import('@supabase/supabase-js');
-  const anonDb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!, {
-    auth: { persistSession: false },
-  });
+  const anonDb = createClient(supabaseUrl, anonKey, { auth: { persistSession: false } });
   for (const tbl of ['quizzes', 'questions', 'options', 'sessions', 'participants', 'answers']) {
     const { data: leaked } = await anonDb.from(tbl).select('*').limit(5);
     assert.equal((leaked ?? []).length, 0, `Anon role must have zero read access on ${tbl}`);
   }
   console.log('✓ Admin routes protected & Supabase RLS blocks anon direct table access');
 
-  // 3. Both requested admins can sign in
-  const admin1Email = 'anirban@xcelerator.in';
-  const admin2Email = 'debadrita@xcelerator.in';
-  const adminPass = process.env.SEED_EXTRA_PASSWORD ?? '12345678';
-  const cookie1 = await createAdminCookieHeader(admin1Email, adminPass);
-  const cookie2 = await createAdminCookieHeader(admin2Email, adminPass);
-  console.log('✓ Both admin accounts (Anirban & Debadrita) authenticated');
+  const serviceDb = createClient(supabaseUrl, serviceKey, { auth: { persistSession: false } });
 
-  // 4. Create quiz as Admin 1, verify validation catches empty quiz, then populate 3 questions
+  // 3. Authenticate primary admin (and optional co-admin if configured)
+  const cookie1 = await createAdminCookieHeader(admin1Email, admin1Pass);
+  let cookie2 = cookie1;
+  const extraEmail = (process.env.SEED_EXTRA_ADMINS ?? '')
+    .split(',')
+    .map((e) => e.trim())
+    .find((e) => e && e.toLowerCase() !== admin1Email.toLowerCase());
+  const extraPass = process.env.SEED_EXTRA_PASSWORD?.trim();
+  if (extraEmail && extraPass) {
+    cookie2 = await createAdminCookieHeader(extraEmail, extraPass);
+    console.log(`✓ Primary admin (${admin1Email}) & co-admin (${extraEmail}) authenticated`);
+  } else {
+    console.log(`✓ Admin (${admin1Email}) authenticated`);
+  }
+
+  // 4. Create quiz, verify validation catches 0 questions and empty team dropdown
   const created = await req<{ id: string }>('/api/admin/quizzes', {
     method: 'POST',
     cookie: cookie1,
-    body: JSON.stringify({ title: 'E2E Verification Quiz' }),
+    body: JSON.stringify({ title: 'Self-Paced E2E Verification Quiz' }),
   });
   assert.equal(created.status, 200);
   const quizId = created.data.id;
 
   try {
-    // Cannot create session with 0 questions
+    // Cannot publish link with 0 questions
     const invalidSes = await req('/api/admin/sessions', {
       method: 'POST',
       cookie: cookie1,
       body: JSON.stringify({ quizId }),
     });
     assert.equal(invalidSes.status, 422);
-    console.log('✓ Quiz validation blocks session creation on incomplete quiz');
-
-    // Configure quiz settings + custom theme via Admin 2 (verifies shared co-admin customization!)
-    const patchRes = await req(`/api/admin/quizzes/${quizId}`, {
-      method: 'PATCH',
-      cookie: cookie2,
-      body: JSON.stringify({
-        duration_seconds: 120,
-        allow_late_join: true,
-        show_answers_after_reveal: true,
-        roll_number_mode: 'optional',
-        theme: { eventTitle: 'Xcelerator Live E2E', preset: 'sunset', primaryColor: '#F97316', accentColor: '#FACC15' },
-      }),
-    });
-    assert.equal(patchRes.status, 200);
 
     const secretOption = 'HyperText Transfer Protocol E2E';
     const q1 = {
@@ -163,7 +168,32 @@ async function main() {
     });
     assert.equal(putQs.status, 200);
 
-    // 5. Create session
+    // Default team_mode = 'list' with empty teams must also block Publish link
+    const emptyTeamsSes = await req('/api/admin/sessions', {
+      method: 'POST',
+      cookie: cookie1,
+      body: JSON.stringify({ quizId }),
+    });
+    assert.equal(emptyTeamsSes.status, 422);
+    console.log('✓ Quiz validation blocks Publish link on 0 questions and empty team dropdown');
+
+    // Configure self-paced quiz settings
+    const patchRes = await req(`/api/admin/quizzes/${quizId}`, {
+      method: 'PATCH',
+      cookie: cookie2,
+      body: JSON.stringify({
+        duration_seconds: 120,
+        team_mode: 'list',
+        teams: ['Team Alpha', 'Team Beta'],
+        email_required: true,
+        score_visibility: 'after_publish',
+        show_answers_after_reveal: true,
+        theme: { eventTitle: 'Xcelerator Self-Paced E2E', preset: 'sunset', primaryColor: '#F97316', accentColor: '#FACC15' },
+      }),
+    });
+    assert.equal(patchRes.status, 200);
+
+    // 5. Publish link -> immediately opens with status = 'live'
     const sesRes = await req<{ id: string; joinCode: string }>('/api/admin/sessions', {
       method: 'POST',
       cookie: cookie2,
@@ -172,92 +202,119 @@ async function main() {
     assert.equal(sesRes.status, 200);
     const { id: sessionId, joinCode } = sesRes.data;
     assert.match(joinCode, /^[23456789ABCDEFGHJKMNPQRSTUVWXYZ]{6}$/);
-    console.log(`✓ Session created (${joinCode}) and accessible across co-admins`);
 
-    // 6. Lobby checks + profanity check + 6 students join (5 active + 1 to remove)
-    const joinInfo = await req(`/api/join/${joinCode}`);
-    assert.equal(joinInfo.status, 200);
-    assertNoAnswerLeak(joinInfo.raw, 'join-info-before-live', secretOption);
+    // Legacy host-started endpoints return 410 Gone
+    assert.equal((await req(`/api/admin/sessions/${sessionId}/start`, { method: 'POST', cookie: cookie1, body: '{}' })).status, 410);
+    assert.equal((await req(`/api/admin/sessions/${sessionId}/extend`, { method: 'POST', cookie: cookie1, body: '{}' })).status, 410);
+    assert.equal((await req(`/api/admin/sessions/${sessionId}/end`, { method: 'POST', cookie: cookie1, body: '{}' })).status, 410);
+    console.log(`✓ Link published (${joinCode}) directly into Open state; legacy host endpoints return 410`);
 
-    const profane = await req(`/api/join/${joinCode}`, {
-      method: 'POST',
-      ip: '10.0.0.99',
-      body: JSON.stringify({ name: 'madarchod123' }),
-    });
-    assert.equal(profane.status, 400);
-
-    const joinStudent = async (name: string, roll: string, idx: number) => {
-      const r = await req<{ participantId: string; deviceToken: string }>(`/api/join/${joinCode}`, {
-        method: 'POST',
-        ip: `10.0.1.${idx}`,
-        body: JSON.stringify({ name, rollNumber: roll }),
-      });
-      assert.equal(r.status, 200, `Join failed for ${name}: ${r.raw}`);
-      return r.data;
-    };
-
-    const s1 = await joinStudent('Aarav', 'USN001', 1);   // will get 4/4 (perfect, fast)
-    const s2 = await joinStudent('Rahul', 'USN002', 2);   // will get 4/4 (perfect, slower -> tie-breaker #2)
-    const s3 = await joinStudent('Rahul', 'USN003', 3);   // duplicate name -> "Rahul (2)", will get 3/4
-    const s4 = await joinStudent('Diya', 'USN004', 4);    // will get 2/4, NEVER manually submits -> auto-submit!
-    const sBad = await joinStudent('Spammer', 'USN999', 6); // will be removed by admin
-
-    const lobbyState = await req(`/api/play/${joinCode}/state?full=1`, { token: s1.deviceToken });
-    assert.equal(lobbyState.status, 200);
-    assertNoAnswerLeak(lobbyState.raw, 'state-before-live', secretOption);
-    console.log('✓ Students joined, profanity filtered, zero question/answer leak in lobby');
-
-    // 7. Start quiz & verify zero answer leak in live state and HTML
-    const startRes = await req<{ startedAt: number; endsAt: number }>(`/api/admin/sessions/${sessionId}/start`, {
-      method: 'POST',
-      cookie: cookie1,
-      body: '{}',
-    });
-    assert.equal(startRes.status, 200);
-
-    // Edit quiz after start to verify snapshot isolation!
+    // Edit quiz after publishing to verify snapshot isolation
     await req(`/api/admin/quizzes/${quizId}/questions`, {
       method: 'PUT',
       cookie: cookie1,
-      body: JSON.stringify({
-        questions: [{ ...q1, points: 99 }],
-      }),
+      body: JSON.stringify({ questions: [{ ...q1, points: 99 }] }),
     });
 
-    const liveState = await req<{ questions: { id: string; options: { id: string; text: string }[] }[]; endsAt: number }>(
-      `/api/play/${joinCode}/state?full=1`,
-      { token: s1.deviceToken },
-    );
-    assert.equal(liveState.status, 200);
-    assert.equal(liveState.data.questions.length, 3, 'Snapshot should still have 3 questions despite post-start edit');
-    assertNoAnswerLeak(liveState.raw, 'state-live', secretOption);
+    // 6. Join metadata, HTML check, validation checks
+    const joinInfo = await req<{ open: boolean; teamMode: string; teams: string[]; questionCount: number }>(`/api/join/${joinCode}`);
+    assert.equal(joinInfo.status, 200);
+    assert.equal(joinInfo.data.open, true);
+    assert.equal(joinInfo.data.questionCount, 3);
+    assert.deepEqual(joinInfo.data.teams, ['Team Alpha', 'Team Beta']);
+    assertNoAnswerLeak(joinInfo.raw, 'join-info-before-begin', secretOption);
 
     const joinHtml = await req(`/j/${joinCode}`);
-    assertNoAnswerLeak(joinHtml.raw, 'join-page-html', secretOption);
-    console.log('✓ Zero answer leak verified in live API payload and HTML source; snapshot isolated from edits');
+    assertNoAnswerLeak(joinHtml.raw, 'join-html-before-begin', secretOption);
 
-    // Late joiner joins after start
-    const s5 = await joinStudent('Karthik', 'USN005', 5); // late joiner, gets 1/4
+    // Profanity, missing email, and unlisted team rejected
+    assert.equal(
+      (await req(`/api/join/${joinCode}`, { method: 'POST', ip: '10.0.0.91', body: JSON.stringify({ name: 'madarchod123', email: 'bad@example.com', team: 'Team Alpha' }) })).status,
+      400,
+    );
+    assert.equal(
+      (await req(`/api/join/${joinCode}`, { method: 'POST', ip: '10.0.0.92', body: JSON.stringify({ name: 'Aarav', email: '', team: 'Team Alpha' }) })).status,
+      400,
+    );
+    assert.equal(
+      (await req(`/api/join/${joinCode}`, { method: 'POST', ip: '10.0.0.93', body: JSON.stringify({ name: 'Aarav', email: 'aarav@example.com', team: 'Unknown Team' }) })).status,
+      400,
+    );
 
-    // Extend time (+60s)
-    const extRes = await req<{ endsAt: number }>(`/api/admin/sessions/${sessionId}/extend`, {
+    const joinStudent = async (name: string, email: string, team: string, idx: number) => {
+      const r = await req<{ participantId: string; deviceToken: string; resumed: boolean }>(`/api/join/${joinCode}`, {
+        method: 'POST',
+        ip: `10.0.1.${idx}`,
+        body: JSON.stringify({ name, email, team }),
+      });
+      assert.equal(r.status, 200, `Join failed for ${name}: ${r.raw}`);
+      assertNoAnswerLeak(r.raw, 'join-post-before-begin', secretOption);
+      return r.data;
+    };
+
+    const s1 = await joinStudent('Aarav', 'aarav@example.com', 'Team Alpha', 1);
+    const s2 = await joinStudent('Rahul', 'rahul@example.com', 'Team Beta', 2);
+    const s3 = await joinStudent('Rahul', 'rahul2@example.com', 'Team Alpha', 3); // duplicate display name -> "Rahul (2)"
+    const s4 = await joinStudent('Diya', 'diya@example.com', 'Team Alpha', 4);    // personal timer expires -> auto-submit
+    const s5 = await joinStudent('Karthik', 'karthik@example.com', 'Team Beta', 5);
+    const sIdle = await joinStudent('Idle Student', 'idle@example.com', 'Team Beta', 6); // never presses Start
+    const sBad = await joinStudent('Spammer', 'spam@example.com', 'Team Beta', 7);
+
+    // Before pressing Start (/begin): phase is 'ready', zero questions exposed, answer rejected
+    const readyState = await req<{ phase: string; questions?: unknown }>(`/api/play/${joinCode}/state?full=1`, {
+      token: s1.deviceToken,
+    });
+    assert.equal(readyState.status, 200);
+    assert.equal(readyState.data.phase, 'ready');
+    assert.equal(readyState.data.questions, undefined, 'Questions must not be sent before student presses Start');
+    assertNoAnswerLeak(readyState.raw, 'state-ready-before-begin', secretOption);
+
+    assert.equal(
+      (await req(`/api/play/${joinCode}/answer`, { method: 'PUT', token: s1.deviceToken, body: JSON.stringify({ questionId: q1.id, optionId: q1.options[0].id }) })).status,
+      409,
+    );
+
+    // 7. Two students start at different times -> independent timers + atomic double-tap idempotency
+    const s1Begin = await req<{ startedAt: number; endsAt: number }>(`/api/play/${joinCode}/begin`, {
       method: 'POST',
-      cookie: cookie2,
-      body: JSON.stringify({ seconds: 60 }),
+      token: s1.deviceToken,
+      body: '{}',
     });
-    assert.equal(extRes.status, 200);
-    assert.ok(extRes.data.endsAt > liveState.data.endsAt, 'endsAt should increase after extend');
+    assert.equal(s1Begin.status, 200);
+    assertNoAnswerLeak(s1Begin.raw, 'begin-response', secretOption);
 
-    // Remove offensive participant
-    const remRes = await req(`/api/admin/sessions/${sessionId}/participants/${sBad.participantId}`, {
-      method: 'DELETE',
-      cookie: cookie1,
+    // Double tap on Start must not reset timer
+    const s1BeginAgain = await req<{ startedAt: number; endsAt: number }>(`/api/play/${joinCode}/begin`, {
+      method: 'POST',
+      token: s1.deviceToken,
+      body: '{}',
     });
-    assert.equal(remRes.status, 200);
-    const badState = await req<{ me: { removed: boolean } }>(`/api/play/${joinCode}/state`, { token: sBad.deviceToken });
-    assert.equal(badState.data.me.removed, true);
+    assert.equal(s1BeginAgain.data.startedAt, s1Begin.data.startedAt);
+    assert.equal(s1BeginAgain.data.endsAt, s1Begin.data.endsAt);
 
-    // 8. Save answers & submit
+    await new Promise((r) => setTimeout(r, 120));
+
+    const s2Begin = await req<{ startedAt: number; endsAt: number }>(`/api/play/${joinCode}/begin`, {
+      method: 'POST',
+      token: s2.deviceToken,
+      body: '{}',
+    });
+    assert.equal(s2Begin.status, 200);
+    assert.ok(s2Begin.data.startedAt > s1Begin.data.startedAt, 'Second student must get a later startedAt');
+    assert.ok(s2Begin.data.endsAt > s1Begin.data.endsAt, 'Second student must get an independent later endsAt');
+    console.log('✓ Independent personal timers & atomic /begin idempotency verified');
+
+    // Verify answering state has sanitized 3-question snapshot & zero correctness leak
+    const answeringState = await req<{
+      phase: string;
+      endsAt: number;
+      questions: { id: string; options: { id: string; text: string }[] }[];
+    }>(`/api/play/${joinCode}/state?full=1`, { token: s1.deviceToken });
+    assert.equal(answeringState.status, 200);
+    assert.equal(answeringState.data.phase, 'answering');
+    assert.equal(answeringState.data.questions.length, 3, 'Snapshot isolated from post-publish quiz edits');
+    assertNoAnswerLeak(answeringState.raw, 'state-answering', secretOption);
+
     const answer = async (token: string, questionId: string, optionId: string) => {
       const r = await req(`/api/play/${joinCode}/answer`, {
         method: 'PUT',
@@ -265,62 +322,136 @@ async function main() {
         body: JSON.stringify({ questionId, optionId }),
       });
       assert.equal(r.status, 200, `Answer save failed: ${r.raw}`);
+      assertNoAnswerLeak(r.raw, 'answer-save', secretOption);
     };
 
-    // s1: all 3 correct (2 + 1 + 1 = 4 pts), submits first
+    // 8. Same email mid-attempt on a second device resumes with saved answers and original timer
     await answer(s1.deviceToken, q1.id, q1.options[0].id);
+    await new Promise((r) => setTimeout(r, 60));
+
+    const resumedJoin = await req<{ participantId: string; deviceToken: string; resumed: boolean }>(`/api/join/${joinCode}`, {
+      method: 'POST',
+      ip: '10.0.2.1',
+      body: JSON.stringify({ name: 'Aarav Second Phone', email: 'AARAV@example.com', team: 'Team Beta' }),
+    });
+    assert.equal(resumedJoin.status, 200);
+    assert.equal(resumedJoin.data.resumed, true);
+    assert.equal(resumedJoin.data.deviceToken, s1.deviceToken, 'Mid-attempt email rejoin must return same deviceToken');
+
+    const resumedState = await req<{ endsAt: number; answers: Record<string, string> }>(`/api/play/${joinCode}/state?full=1`, {
+      token: resumedJoin.data.deviceToken,
+    });
+    assert.equal(resumedState.data.endsAt, s1Begin.data.endsAt, 'Mid-attempt email rejoin must preserve original endsAt');
+    assert.equal(resumedState.data.answers[q1.id], q1.options[0].id);
+
+    // Finish s1 (4 pts, fast) and submit
     await answer(s1.deviceToken, q2.id, q2.options[1].id);
     await answer(s1.deviceToken, q3.id, q3.options[1].id);
+    const s1Sub = await req(`/api/play/${joinCode}/submit`, { method: 'POST', token: s1.deviceToken, body: '{}' });
+    assert.equal(s1Sub.status, 200);
+    assertNoAnswerLeak(s1Sub.raw, 'submit-response', secretOption);
 
-    // Verify refresh mid-quiz restores saved answers
-    const refreshed = await req<{ answers: Record<string, string> }>(`/api/play/${joinCode}/state?full=1`, {
-      token: s1.deviceToken,
+    // Same email after submitting is blocked (409 already_submitted)
+    const repeatJoin = await req<{ error: string; code: string }>(`/api/join/${joinCode}`, {
+      method: 'POST',
+      ip: '10.0.2.2',
+      body: JSON.stringify({ name: 'Aarav Retry', email: 'aarav@example.com', team: 'Team Alpha' }),
     });
-    assert.equal(Object.keys(refreshed.data.answers).length, 3);
-    console.log('✓ Mid-quiz refresh restores saved answers');
+    assert.equal(repeatJoin.status, 409);
+    assert.equal(repeatJoin.data.code, 'already_submitted');
+    assert.equal(repeatJoin.data.error, 'This email has already completed the quiz.');
+    console.log('✓ One-attempt-per-email: mid-attempt resume & post-submit block verified');
 
-    assert.equal((await req(`/api/play/${joinCode}/submit`, { method: 'POST', token: s1.deviceToken, body: '{}' })).status, 200);
-    // Double submit is a safe no-op; answer change after submit is rejected (409)
-    assert.equal((await req(`/api/play/${joinCode}/submit`, { method: 'POST', token: s1.deviceToken, body: '{}' })).status, 200);
-    assert.equal(
-      (await req(`/api/play/${joinCode}/answer`, { method: 'PUT', token: s1.deviceToken, body: JSON.stringify({ questionId: q1.id, optionId: q1.options[1].id }) })).status,
-      409,
-    );
-
-    await new Promise((r) => setTimeout(r, 80)); // ensure s2 has a strictly larger timeTakenMs than s1
-
-    // s2 (Rahul): all 3 correct (4 pts), slower than s1
+    // Finish s2 (4 pts, slower elapsed time than s1)
+    await new Promise((r) => setTimeout(r, 120));
     await answer(s2.deviceToken, q1.id, q1.options[0].id);
     await answer(s2.deviceToken, q2.id, q2.options[1].id);
     await answer(s2.deviceToken, q3.id, q3.options[1].id);
-    await req(`/api/play/${joinCode}/submit`, { method: 'POST', token: s2.deviceToken, body: '{}' });
+    assert.equal((await req(`/api/play/${joinCode}/submit`, { method: 'POST', token: s2.deviceToken, body: '{}' })).status, 200);
 
-    // s3 (Rahul #2): Q1 + Q2 correct, Q3 wrong (3 pts)
+    // 9. Expired personal attempt auto-submits with submitted_at = participant.ends_at
+    await req(`/api/play/${joinCode}/begin`, { method: 'POST', token: s4.deviceToken, body: '{}' });
+    await answer(s4.deviceToken, q1.id, q1.options[0].id); // 2 pts
+    const pastStart = new Date(Date.now() - 130_000).toISOString();
+    const pastEnd = new Date(Date.now() - 10_000).toISOString();
+    await serviceDb
+      .from('participants')
+      .update({ started_at: pastStart, ends_at: pastEnd })
+      .eq('id', s4.participantId);
+
+    const s4ExpiredState = await req<{ phase: string; me: { autoSubmitted: boolean } }>(`/api/play/${joinCode}/state`, {
+      token: s4.deviceToken,
+    });
+    assert.equal(s4ExpiredState.status, 200);
+    assert.equal(s4ExpiredState.data.phase, 'submitted');
+    assert.equal(s4ExpiredState.data.me.autoSubmitted, true);
+
+    const { data: s4Row } = await serviceDb
+      .from('participants')
+      .select('submitted_at, ends_at, auto_submitted, score, time_taken_ms')
+      .eq('id', s4.participantId)
+      .single();
+    assert.ok(s4Row);
+    assert.equal(new Date(s4Row.submitted_at!).getTime(), new Date(s4Row.ends_at!).getTime(), 'submitted_at must equal participant.ends_at');
+    assert.equal(s4Row.auto_submitted, true);
+    assert.equal(s4Row.score, 2);
+    assert.equal(s4Row.time_taken_ms, 120_000);
+    console.log('✓ Expired personal timer auto-submitted with submitted_at = participant.ends_at');
+
+    // 10. Closing the link blocks new students, but NOT already-started attempts
+    await req(`/api/play/${joinCode}/begin`, { method: 'POST', token: s3.deviceToken, body: '{}' });
+
+    const closeRes = await req(`/api/admin/sessions/${sessionId}/close`, {
+      method: 'POST',
+      cookie: cookie1,
+      body: '{}',
+    });
+    assert.equal(closeRes.status, 200);
+
+    // New student blocked while closed
+    const blockedJoin = await req<{ error: string }>(`/api/join/${joinCode}`, {
+      method: 'POST',
+      ip: '10.0.3.1',
+      body: JSON.stringify({ name: 'Late Arrival', email: 'late@example.com', team: 'Team Alpha' }),
+    });
+    assert.equal(blockedJoin.status, 403);
+    assert.equal(blockedJoin.data.error, 'This quiz is closed.');
+
+    // Meanwhile s3 (mid-attempt!) can still answer and submit while the link is closed
     await answer(s3.deviceToken, q1.id, q1.options[0].id);
     await answer(s3.deviceToken, q2.id, q2.options[1].id);
-    await answer(s3.deviceToken, q3.id, q3.options[0].id);
-    await req(`/api/play/${joinCode}/submit`, { method: 'POST', token: s3.deviceToken, body: '{}' });
+    await answer(s3.deviceToken, q3.id, q3.options[0].id); // 3 pts
+    assert.equal((await req(`/api/play/${joinCode}/submit`, { method: 'POST', token: s3.deviceToken, body: '{}' })).status, 200);
+    console.log('✓ Closing link blocks new students while allowing in-progress attempts to finish');
 
-    // s4 (Diya): Q1 correct (2 pts), does NOT submit manually -> tests auto-submit!
-    await answer(s4.deviceToken, q1.id, q1.options[0].id);
+    // Test Reopen (P1): s5 starts, answers 1 pt, submits; then close again
+    assert.equal((await req(`/api/admin/sessions/${sessionId}/reopen`, { method: 'POST', cookie: cookie1, body: '{}' })).status, 200);
+    await req(`/api/play/${joinCode}/begin`, { method: 'POST', token: s5.deviceToken, body: '{}' });
+    await answer(s5.deviceToken, q2.id, q2.options[1].id); // 1 pt
+    assert.equal((await req(`/api/play/${joinCode}/submit`, { method: 'POST', token: s5.deviceToken, body: '{}' })).status, 200);
+    assert.equal((await req(`/api/admin/sessions/${sessionId}/close`, { method: 'POST', cookie: cookie1, body: '{}' })).status, 200);
 
-    // s5 (Karthik, late join): Q2 correct (1 pt)
-    await answer(s5.deviceToken, q2.id, q2.options[1].id);
-    await req(`/api/play/${joinCode}/submit`, { method: 'POST', token: s5.deviceToken, body: '{}' });
+    // Remove offensive participant
+    assert.equal((await req(`/api/admin/sessions/${sessionId}/participants/${sBad.participantId}`, { method: 'DELETE', cookie: cookie1 })).status, 200);
+    const badState = await req<{ phase: string }>(`/api/play/${joinCode}/state`, { token: sBad.deviceToken });
+    assert.equal(badState.data.phase, 'removed');
 
-    // Result endpoint blocked while live
+    // Result endpoint blocked before publish when score_visibility = 'after_publish'
     assert.equal((await req(`/api/play/${joinCode}/result`, { token: s1.deviceToken })).status, 403);
 
-    // 9. End session -> auto-submits Diya (s4)
-    const endRes = await req(`/api/admin/sessions/${sessionId}/end`, { method: 'POST', cookie: cookie1, body: '{}' });
-    assert.equal(endRes.status, 200);
+    // Idle student who never pressed Start stays out of leaderboard
+    const statsRes = await req<{ notStarted: number; inProgress: number; submitted: number }>(`/api/admin/sessions/${sessionId}/stats`, {
+      cookie: cookie1,
+    });
+    assert.equal(statsRes.data.notStarted, 1);
+    assert.equal(statsRes.data.inProgress, 0);
+    assert.equal(statsRes.data.submitted, 5);
+    assert.ok(sIdle.participantId);
 
-    // Result endpoint STILL blocked while ended (before reveal!)
-    assert.equal((await req(`/api/play/${joinCode}/result`, { token: s1.deviceToken })).status, 403);
-
-    // 10. Verify manual score & rank calculation on the 5 active students
+    // 11. Verify leaderboard & team rankings before/after publishing results
     const adminResults = await req<{
-      rows: { rank: number; name: string; score: number; autoSubmitted: boolean }[];
+      rows: { rank: number; name: string; team: string | null; score: number; autoSubmitted: boolean }[];
+      teamRows: { rank: number; team: string; membersSubmitted: number; totalScore: number; averageScore: number }[];
     }>(`/api/admin/sessions/${sessionId}/results`, { cookie: cookie2 });
     assert.equal(adminResults.status, 200);
     assert.deepEqual(
@@ -333,9 +464,18 @@ async function main() {
         { rank: 5, name: 'Karthik', score: 1, auto: false },
       ],
     );
-    console.log('✓ 5-student manual score, tie-breaker, duplicate name suffix, removal, and auto-submit verified');
+    // Team Alpha: Aarav (4) + Rahul (2) (3) + Diya (2) = 9 / 3 = 3.0 avg
+    // Team Beta: Rahul (4) + Karthik (1) = 5 / 2 = 2.5 avg
+    assert.deepEqual(
+      adminResults.data.teamRows.map((t) => ({ rank: t.rank, team: t.team, members: t.membersSubmitted, avg: t.averageScore })),
+      [
+        { rank: 1, team: 'Team Alpha', members: 3, avg: 3 },
+        { rank: 2, team: 'Team Beta', members: 2, avg: 2.5 },
+      ],
+    );
+    console.log('✓ Individual & team rankings, duplicate name suffix, removal, and not-started exclusion verified');
 
-    // 11. Reveal leaderboard & check student result + review
+    // Publish results (reveal)
     const revRes = await req(`/api/admin/sessions/${sessionId}/reveal`, {
       method: 'POST',
       cookie: cookie1,
@@ -352,32 +492,33 @@ async function main() {
     assert.equal(s3Result.data.total, 5);
     assert.equal(s3Result.data.score, 3);
     assert.equal(s3Result.data.review.length, 3);
-    console.log('✓ Student rank & answer review verified after reveal');
+    console.log('✓ Student rank & answer review verified after publishing results');
 
-    // 12. Verify CSV & Excel (.xlsx) exports
+    // 12. Verify CSV & 4-sheet Excel (.xlsx) exports
     const csvRes = await fetch(`${BASE}/api/admin/sessions/${sessionId}/export.csv`, {
       headers: { Cookie: cookie1 },
     });
     assert.equal(csvRes.status, 200);
-    assert.match(csvRes.headers.get('content-disposition') ?? '', /_leaderboard\.csv/);
     const csvText = await csvRes.text();
-    assert.ok(csvText.includes('Rahul (2)') && csvText.includes('Aarav'), 'CSV missing expected ranked rows');
+    assert.ok(csvText.includes('Email,Team'), 'CSV must include Email and Team columns');
+    assert.equal(csvText.includes('Roll number'), false, 'CSV must omit empty Roll number column');
+    assert.ok(csvText.includes('aarav@example.com') && csvText.includes('Team Alpha'));
 
     const xlsxRes = await fetch(`${BASE}/api/admin/sessions/${sessionId}/export.xlsx`, {
       headers: { Cookie: cookie1 },
     });
     assert.equal(xlsxRes.status, 200);
-    assert.match(xlsxRes.headers.get('content-disposition') ?? '', /_results\.xlsx/);
     const wb = new ExcelJS.Workbook();
     await wb.xlsx.load(await xlsxRes.arrayBuffer());
     assert.deepEqual(
       wb.worksheets.map((w) => w.name),
-      ['Leaderboard', 'Responses', 'Question stats'],
+      ['Leaderboard', 'Responses', 'Question stats', 'Teams'],
     );
-    assert.equal(wb.getWorksheet('Leaderboard')!.rowCount, 6); // 1 header + 5 active students
-    console.log('✓ CSV and 3-sheet Excel (.xlsx) exports verified');
+    assert.equal(wb.getWorksheet('Leaderboard')!.rowCount, 6); // 1 header + 5 submitted students
+    assert.equal(wb.getWorksheet('Teams')!.rowCount, 3); // 1 header + 2 teams
+    console.log('✓ CSV and 4-sheet Excel (.xlsx) exports verified');
 
-    // 13. Reset session
+    // 13. Reset session -> status back to 'live'
     const resetRes = await req(`/api/admin/sessions/${sessionId}/reset`, {
       method: 'POST',
       cookie: cookie1,
@@ -386,12 +527,14 @@ async function main() {
     assert.equal(resetRes.status, 200);
     const afterReset = await req(`/api/play/${joinCode}/state`, { token: s1.deviceToken });
     assert.equal(afterReset.status, 404, 'Old participant token must 404 after session reset');
+    const reopenCheck = await req<{ open: boolean }>(`/api/join/${joinCode}`);
+    assert.equal(reopenCheck.data.open, true, 'Session must be Open again after reset');
     console.log('✓ Session reset verified');
   } finally {
     await req(`/api/admin/quizzes/${quizId}`, { method: 'DELETE', cookie: cookie1 });
   }
 
-  console.log('\n🎉 ALL E2E ACCEPTANCE CHECKS PASSED!');
+  console.log('\n🎉 ALL SELF-PACED E2E ACCEPTANCE CHECKS PASSED!');
 }
 
 main().catch((err) => {

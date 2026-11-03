@@ -2,7 +2,17 @@ import { performance } from 'node:perf_hooks';
 import { createServerClient } from '@supabase/ssr';
 
 const BASE = (process.env.BASE_URL ?? 'http://localhost:3000').replace(/\/$/, '');
-const COUNT = Number(process.env.PARTICIPANTS ?? 350);
+const COUNT = Number(process.env.PARTICIPANTS ?? 300);
+/** Staggered arrival window in ms — defaults to 10 minutes (600,000ms) per spec; override via WINDOW_MS for quick burst tests. */
+const WINDOW_MS = Number(process.env.WINDOW_MS ?? 600_000);
+
+function requireEnv(name: string, fallback?: string): string {
+  const val = (process.env[name] ?? (fallback ? process.env[fallback] : undefined))?.trim();
+  if (!val) {
+    throw new Error(`Missing required environment variable: ${name}${fallback ? ` (or ${fallback})` : ''}`);
+  }
+  return val;
+}
 
 function percentile(sorted: number[], p: number): number {
   if (!sorted.length) return 0;
@@ -20,8 +30,8 @@ function report(name: string, samples: number[], errors: number) {
 async function createAdminCookie(email: string, password: string): Promise<string> {
   const jar = new Map<string, string>();
   const sb = createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    requireEnv('NEXT_PUBLIC_SUPABASE_URL'),
+    requireEnv('NEXT_PUBLIC_SUPABASE_ANON_KEY'),
     {
       cookies: {
         getAll: () => [...jar.entries()].map(([name, value]) => ({ name, value })),
@@ -36,140 +46,165 @@ async function createAdminCookie(email: string, password: string): Promise<strin
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-async function runPool<T>(items: T[], concurrency: number, worker: (item: T, idx: number) => Promise<void>) {
-  let cursor = 0;
-  await Promise.all(
-    Array.from({ length: Math.min(concurrency, items.length) }, async () => {
-      for (;;) {
-        const idx = cursor++;
-        if (idx >= items.length) break;
-        await worker(items[idx], idx);
-      }
-    }),
-  );
-}
-
 async function main() {
-  console.log(`Simulating ${COUNT} concurrent students against ${BASE} ...`);
-  const cookie = await createAdminCookie('anirban@xcelerator.in', process.env.SEED_EXTRA_PASSWORD ?? '12345678');
+  const supabaseUrl = requireEnv('NEXT_PUBLIC_SUPABASE_URL');
+  const serviceKey = requireEnv('SUPABASE_SERVICE_ROLE_KEY');
+  const adminEmail = requireEnv('LOADTEST_ADMIN_EMAIL', 'SEED_ADMIN_EMAIL');
+  const adminPassword = requireEnv('LOADTEST_ADMIN_PASSWORD', 'SEED_ADMIN_PASSWORD');
 
-  // Find Demo Tech Quiz via Supabase service role to create a temporary load-test session
+  console.log(
+    `Simulating ${COUNT} self-paced students arriving randomly over ${Math.round(WINDOW_MS / 1000)}s against ${BASE} ...`,
+  );
+  const cookie = await createAdminCookie(adminEmail, adminPassword);
+
   const { createClient } = await import('@supabase/supabase-js');
-  const adminDb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!, {
-    auth: { persistSession: false },
-  });
-  const { data: quiz } = await adminDb.from('quizzes').select('id').eq('title', 'Demo Tech Quiz').limit(1).single();
+  const adminDb = createClient(supabaseUrl, serviceKey, { auth: { persistSession: false } });
+  const { data: quiz } = await adminDb
+    .from('quizzes')
+    .select('id, team_mode, teams')
+    .eq('title', 'Demo Tech Quiz')
+    .limit(1)
+    .single();
   if (!quiz) throw new Error('Demo Tech Quiz not found — run `npm run seed` first');
 
+  const defaultTeams = ['Team Alpha', 'Team Beta', 'Team Gamma', 'Team Delta'];
+  const teams: string[] =
+    quiz.team_mode === 'list'
+      ? quiz.teams?.length
+        ? quiz.teams
+        : defaultTeams
+      : defaultTeams;
+
+  if (quiz.team_mode === 'list' && (!quiz.teams || quiz.teams.length === 0)) {
+    await adminDb.from('quizzes').update({ teams: defaultTeams }).eq('id', quiz.id);
+  }
+
+  // Publish self-paced link (status = 'live')
   const sesRes = await fetch(`${BASE}/api/admin/sessions`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Cookie: cookie },
     body: JSON.stringify({ quizId: quiz.id }),
   });
-  if (!sesRes.ok) throw new Error(`Failed creating session: ${await sesRes.text()}`);
+  if (!sesRes.ok) throw new Error(`Failed publishing link: ${await sesRes.text()}`);
   const { id: sessionId, joinCode } = (await sesRes.json()) as { id: string; joinCode: string };
 
   const joinTimes: number[] = [];
+  const beginTimes: number[] = [];
   const stateTimes: number[] = [];
   const answerTimes: number[] = [];
   const submitTimes: number[] = [];
   let joinErr = 0,
+    beginErr = 0,
     stateErr = 0,
     answerErr = 0,
     submitErr = 0;
 
   try {
-    // 1. Join wave (COUNT students)
-    const students: { idx: number; token: string }[] = [];
-    await runPool(
-      Array.from({ length: COUNT }, (_, i) => i),
-      60,
-      async (i) => {
-        const t0 = performance.now();
-        const res = await fetch(`${BASE}/api/join/${joinCode}`, {
+    await Promise.all(
+      Array.from({ length: COUNT }, async (_, i) => {
+        // Random arrival time across the window
+        const arrivalDelay = Math.floor(Math.random() * WINDOW_MS);
+        if (arrivalDelay > 0) await sleep(arrivalDelay);
+
+        const ip = `10.${Math.floor(i / 250)}.${i % 250}.1`;
+        const team = quiz.team_mode === 'off' ? '' : teams[i % teams.length];
+
+        // 1. Enter details (/join)
+        const tJoin = performance.now();
+        const jRes = await fetch(`${BASE}/api/join/${joinCode}`, {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'x-forwarded-for': `10.${Math.floor(i / 250)}.${i % 250}.1`,
-          },
-          body: JSON.stringify({ name: `Student ${i + 1}`, rollNumber: `USN${String(i + 1).padStart(4, '0')}` }),
+          headers: { 'Content-Type': 'application/json', 'x-forwarded-for': ip },
+          body: JSON.stringify({
+            name: `Student ${i + 1}`,
+            email: `student${i + 1}@loadtest.example.com`,
+            team,
+          }),
         });
-        joinTimes.push(performance.now() - t0);
-        if (!res.ok) {
+        joinTimes.push(performance.now() - tJoin);
+        if (!jRes.ok) {
           joinErr++;
           return;
         }
-        const data = (await res.json()) as { deviceToken: string };
-        students.push({ idx: i, token: data.deviceToken });
-      },
-    );
+        const { deviceToken } = (await jRes.json()) as { deviceToken: string };
 
-    // 2. Start quiz
-    const startRes = await fetch(`${BASE}/api/admin/sessions/${sessionId}/start`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Cookie: cookie },
-      body: '{}',
-    });
-    if (!startRes.ok) throw new Error(`Failed starting session: ${await startRes.text()}`);
-
-    // 3. Each student loads /state?full=1, answers all 10 questions with jitter, and 90% submit manually
-    await runPool(students, 75, async (st) => {
-      const tState = performance.now();
-      const sRes = await fetch(`${BASE}/api/play/${joinCode}/state?full=1`, {
-        headers: { 'x-device-token': st.token },
-      });
-      stateTimes.push(performance.now() - tState);
-      if (!sRes.ok) {
-        stateErr++;
-        return;
-      }
-      const state = (await sRes.json()) as { questions: { id: string; options: { id: string }[] }[] };
-      for (const q of state.questions) {
-        await sleep(5 + Math.random() * 20);
-        const pick = q.options[Math.floor(Math.random() * q.options.length)];
-        const tAns = performance.now();
-        const aRes = await fetch(`${BASE}/api/play/${joinCode}/answer`, {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json', 'x-device-token': st.token },
-          body: JSON.stringify({ questionId: q.id, optionId: pick.id }),
+        // 2. Press Start (/begin) -> starts personal countdown
+        const tBegin = performance.now();
+        const bRes = await fetch(`${BASE}/api/play/${joinCode}/begin`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'x-device-token': deviceToken },
+          body: '{}',
         });
-        answerTimes.push(performance.now() - tAns);
-        if (!aRes.ok) answerErr++;
-      }
+        beginTimes.push(performance.now() - tBegin);
+        if (!bRes.ok) {
+          beginErr++;
+          return;
+        }
 
-      if (st.idx % 10 !== 0) {
+        // 3. Load sanitized questions (/state?full=1)
+        const tState = performance.now();
+        const sRes = await fetch(`${BASE}/api/play/${joinCode}/state?full=1`, {
+          headers: { 'x-device-token': deviceToken },
+        });
+        stateTimes.push(performance.now() - tState);
+        if (!sRes.ok) {
+          stateErr++;
+          return;
+        }
+        const state = (await sRes.json()) as { questions: { id: string; options: { id: string }[] }[] };
+
+        // 4. Answer all 10 questions
+        for (const q of state.questions) {
+          await sleep(10 + Math.random() * 40);
+          const pick = q.options[Math.floor(Math.random() * q.options.length)];
+          const tAns = performance.now();
+          const aRes = await fetch(`${BASE}/api/play/${joinCode}/answer`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json', 'x-device-token': deviceToken },
+            body: JSON.stringify({ questionId: q.id, optionId: pick.id }),
+          });
+          answerTimes.push(performance.now() - tAns);
+          if (!aRes.ok) answerErr++;
+        }
+
+        // 5. Submit attempt
         const tSub = performance.now();
         const subRes = await fetch(`${BASE}/api/play/${joinCode}/submit`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'x-device-token': st.token },
+          headers: { 'Content-Type': 'application/json', 'x-device-token': deviceToken },
           body: '{}',
         });
         submitTimes.push(performance.now() - tSub);
         if (!subRes.ok) submitErr++;
-      }
-    });
+      }),
+    );
 
-    // 4. End & reveal (auto-submits remaining 10%!)
-    const tEnd = performance.now();
-    const endRes = await fetch(`${BASE}/api/admin/sessions/${sessionId}/end`, {
+    // Close link & publish results
+    const closeRes = await fetch(`${BASE}/api/admin/sessions/${sessionId}/close`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Cookie: cookie },
       body: '{}',
     });
-    if (!endRes.ok) throw new Error(`End failed: ${await endRes.text()}`);
-    console.log(`Finalize (${Math.ceil(COUNT * 0.1)} auto-submitted): ${Math.round(performance.now() - tEnd)}ms`);
+    if (!closeRes.ok) throw new Error(`Close failed: ${await closeRes.text()}`);
 
-    console.log('\n--- Load Test Results ---');
+    const revRes = await fetch(`${BASE}/api/admin/sessions/${sessionId}/reveal`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: cookie },
+      body: JSON.stringify({ action: 'start', mode: 'auto' }),
+    });
+    if (!revRes.ok) throw new Error(`Publish results failed: ${await revRes.text()}`);
+
+    console.log('\n--- Self-Paced Load Test Results ---');
     report('POST /join', joinTimes, joinErr);
+    report('POST /begin', beginTimes, beginErr);
     report('GET  /state?full=1', stateTimes, stateErr);
     report('PUT  /answer', answerTimes, answerErr);
     report('POST /submit', submitTimes, submitErr);
 
-    const totalErrors = joinErr + stateErr + answerErr + submitErr;
+    const totalErrors = joinErr + beginErr + stateErr + answerErr + submitErr;
     if (totalErrors > 0) {
       throw new Error(`Load test had ${totalErrors} failed requests`);
     }
-    console.log(`\n✅ ${COUNT} concurrent students completed ${answerTimes.length} answer saves with ZERO errors!`);
+    console.log(`\n✅ ${COUNT} self-paced students completed ${answerTimes.length} answer saves & submitted with ZERO errors!`);
   } finally {
     await adminDb.from('sessions').delete().eq('id', sessionId);
   }
@@ -179,4 +214,3 @@ main().catch((err) => {
   console.error('Load test failed:', err);
   process.exit(1);
 });
-
