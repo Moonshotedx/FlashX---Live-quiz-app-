@@ -110,7 +110,7 @@ export function TeamSelect({ id: customId, value, onChange, teams, hasError }: T
           hasError ? 'border-bad bg-bad/10 text-bad' : 'border-ink/20 bg-ink/10 text-ink focus:border-accent'
         }`}
       >
-        <span className="truncate">
+        <span className="min-w-0 truncate" title={value || undefined}>
           {value ? (
             <span className="font-semibold text-ink">{value}</span>
           ) : (
@@ -153,7 +153,7 @@ export function TeamSelect({ id: customId, value, onChange, teams, hasError }: T
 
       {/* Dropdown Menu with Live Search */}
       {open && (
-        <div className="absolute left-0 right-0 top-full z-50 mt-2 rounded-2xl border-2 border-slate-700 bg-slate-900/98 p-3 shadow-2xl backdrop-blur-xl animate-fadeIn">
+        <div className="absolute left-0 right-0 top-full z-50 mt-2 max-w-full rounded-2xl border-2 border-slate-700 bg-slate-900 p-3 shadow-2xl animate-fadeUp">
           {/* Live Search Bar */}
           <div className="relative mb-2">
             <svg
@@ -196,7 +196,7 @@ export function TeamSelect({ id: customId, value, onChange, teams, hasError }: T
             ref={listRef}
             role="listbox"
             tabIndex={-1}
-            className="max-h-60 overflow-y-auto overscroll-contain rounded-lg p-0.5 space-y-0.5 scrollbar-thin scrollbar-thumb-slate-700"
+            className="max-h-[min(15rem,35dvh)] sm:max-h-72 overflow-y-auto overflow-x-hidden overscroll-contain rounded-lg p-0.5 space-y-0.5 scrollbar-thin scrollbar-thumb-slate-700"
           >
             {filtered.length === 0 ? (
               <li className="py-6 text-center text-sm text-slate-400">
@@ -213,7 +213,7 @@ export function TeamSelect({ id: customId, value, onChange, teams, hasError }: T
                     aria-selected={isSelected}
                     onClick={() => handleSelect(t)}
                     onMouseEnter={() => setHighlightIndex(idx)}
-                    className={`flex cursor-pointer items-center justify-between rounded-lg px-3 py-2.5 text-sm transition-colors duration-150 ${
+                    className={`flex cursor-pointer items-center justify-between gap-2 rounded-lg px-3 py-2.5 text-sm transition-colors duration-150 ${
                       isSelected
                         ? 'bg-violet-600 font-semibold text-white'
                         : isHighlighted
@@ -221,7 +221,7 @@ export function TeamSelect({ id: customId, value, onChange, teams, hasError }: T
                           : 'text-slate-200 hover:bg-slate-800/60'
                     }`}
                   >
-                    <span className="truncate">{t}</span>
+                    <span className="min-w-0 break-words">{t}</span>
                     {isSelected && (
                       <svg className="h-4 w-4 shrink-0" fill="currentColor" viewBox="0 0 20 20">
                         <path
