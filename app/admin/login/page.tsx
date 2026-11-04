@@ -3,6 +3,7 @@ import { Suspense, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { supabaseBrowser } from '@/lib/supabase-browser';
 import { FlashXLogo } from '@/components/brand/FlashXLogo';
+import { Spinner } from '@/components/ui/Spinner';
 
 function LoginForm() {
   const router = useRouter();
@@ -28,7 +29,7 @@ function LoginForm() {
   };
 
   return (
-    <form onSubmit={submit} className="panel w-full max-w-sm space-y-4">
+    <form onSubmit={submit} className="panel w-full max-w-sm animate-pageIn space-y-4">
       <div className="flex flex-col items-center gap-3 text-center">
         <FlashXLogo variant="dark" size="md" />
         <h1 className="sr-only">Admin sign in</h1>
@@ -43,7 +44,16 @@ function LoginForm() {
         <input id="password" type="password" autoComplete="current-password" required value={password} onChange={(e) => setPassword(e.target.value)} className="field" />
       </div>
       {error && <p role="alert" className="rounded-lg bg-red-500/15 p-2 text-sm text-red-300">{error}</p>}
-      <button disabled={busy} className="btn-primary w-full">{busy ? 'Signing in…' : 'Sign in'}</button>
+      <button disabled={busy} aria-busy={busy} className="btn-primary w-full">
+        {busy ? (
+          <>
+            <Spinner />
+            Signing in…
+          </>
+        ) : (
+          'Sign in'
+        )}
+      </button>
     </form>
   );
 }

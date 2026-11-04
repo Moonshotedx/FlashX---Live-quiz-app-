@@ -19,29 +19,24 @@ export default async function AdminHome() {
   const admin = await getAdmin();
   if (!admin) redirect('/admin/login');
 
-  const quizzes = unwrap<unknown[]>(
-    await db().from('quizzes').select('id,title,updated_at,duration_seconds,questions(count)').order('updated_at', { ascending: false }),
-    'quizzes',
-  ) as (Omit<QuizItem, 'questionCount' | 'openLinks'> & { questions: { count: number }[] })[];
-
-  const [openRows, recentRows] = (await Promise.all([
-    unwrap<unknown[]>(
-      await db()
-        .from('sessions')
-        .select('id,quiz_id,join_code,status,closes_at,created_at,quizzes!inner(title)')
-        .eq('status', 'live')
-        .order('created_at', { ascending: false }),
-      'open sessions',
-    ),
-    unwrap<unknown[]>(
-      await db()
-        .from('sessions')
-        .select('id,quiz_id,join_code,status,closes_at,created_at,quizzes!inner(title)')
-        .order('created_at', { ascending: false })
-        .limit(12),
-      'recent sessions',
-    ),
-  ])) as [RawSession[], RawSession[]];
+  const [qRes, openRes, recentRes] = await Promise.all([
+    db().from('quizzes').select('id,title,updated_at,duration_seconds,questions(count)').order('updated_at', { ascending: false }),
+    db()
+      .from('sessions')
+      .select('id,quiz_id,join_code,status,closes_at,created_at,quizzes!inner(title)')
+      .eq('status', 'live')
+      .order('created_at', { ascending: false }),
+    db()
+      .from('sessions')
+      .select('id,quiz_id,join_code,status,closes_at,created_at,quizzes!inner(title)')
+      .order('created_at', { ascending: false })
+      .limit(12),
+  ]);
+  const quizzes = unwrap<unknown[]>(qRes, 'quizzes') as (Omit<QuizItem, 'questionCount' | 'openLinks'> & {
+    questions: { count: number }[];
+  })[];
+  const openRows = unwrap<unknown[]>(openRes, 'open sessions') as RawSession[];
+  const recentRows = unwrap<unknown[]>(recentRes, 'recent sessions') as RawSession[];
 
   // Lazy auto-close display normalization if closes_at has passed
   const now = Date.now();

@@ -37,8 +37,8 @@ export function ImportModal({ onClose, onImport }: { onClose: () => void; onImpo
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4" role="dialog" aria-modal="true" aria-labelledby="import-title">
-      <div className="panel flex max-h-[90vh] w-full max-w-4xl flex-col gap-4 overflow-hidden">
+    <div className="fixed inset-0 z-50 flex animate-modalBackdrop items-center justify-center bg-black/70 p-4" role="dialog" aria-modal="true" aria-labelledby="import-title">
+      <div className="panel flex max-h-[90vh] w-full max-w-4xl animate-modalPop flex-col gap-4 overflow-hidden">
         <div className="flex items-center justify-between">
           <h2 id="import-title" className="text-lg font-bold text-white">Import questions from CSV</h2>
           <button className="btn-ghost" onClick={onClose}>✕</button>

@@ -1,14 +1,12 @@
 import Link from 'next/link';
-import { authClient, isAdminUser } from '@/lib/server/auth';
+import { getAuthUser, isAdminUser } from '@/lib/server/auth';
 import { SignOutButton } from '@/components/admin/SignOutButton';
 import { FlashXLogo } from '@/components/brand/FlashXLogo';
 
 export const dynamic = 'force-dynamic';
 
 export default async function AdminLayout({ children }: { children: React.ReactNode }) {
-  const sb = await authClient();
-  const { data } = await sb.auth.getUser();
-  const user = data.user;
+  const user = await getAuthUser();
 
   // Login page (no user) renders bare.
   if (!user) return <>{children}</>;

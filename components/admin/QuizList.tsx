@@ -1,8 +1,9 @@
 'use client';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { useState } from 'react';
+import { useState, useTransition } from 'react';
 import { api, ApiError } from '@/lib/client-api';
+import { Spinner } from '@/components/ui/Spinner';
 
 export interface QuizLinkSummary {
   id: string;
@@ -48,47 +49,64 @@ const STATUS_LABEL: Record<string, string> = {
 export function QuizList({ quizzes, sessions }: { quizzes: QuizItem[]; sessions: SessionItem[] }) {
   const router = useRouter();
   const [busy, setBusy] = useState<string | null>(null);
+  const [isPending, startTransition] = useTransition();
+  const [pendingKey, setPendingKey] = useState<string | null>(null);
   const [problem, setProblem] = useState<{ quizId: string; messages: string[] } | null>(null);
   const [error, setError] = useState('');
 
-  const run = async (key: string, fn: () => Promise<void>) => {
+  const activeKey = busy ?? (isPending ? pendingKey : null);
+  const isAnyBusy = activeKey !== null;
+
+  const run = async (key: string, fn: (navigate: (cb: () => void) => void) => Promise<void>) => {
     setBusy(key);
+    setPendingKey(null);
     setError('');
+    let handedToTransition = false;
     try {
-      await fn();
+      await fn((cb) => {
+        handedToTransition = true;
+        setPendingKey(key);
+        startTransition(cb);
+      });
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Something went wrong');
+      setPendingKey(null);
     } finally {
       setBusy(null);
+      if (!handedToTransition) setPendingKey(null);
     }
   };
 
   const create = () =>
-    run('new', async () => {
+    run('new', async (navigate) => {
       const q = await api<{ id: string }>('/api/admin/quizzes', { method: 'POST', json: {} });
-      router.push(`/admin/quizzes/${q.id}`);
+      const target = `/admin/quizzes/${q.id}`;
+      router.prefetch(target);
+      navigate(() => router.push(target));
     });
 
   const duplicate = (id: string) =>
-    run(`dup${id}`, async () => {
+    run(`dup${id}`, async (navigate) => {
       await api(`/api/admin/quizzes/${id}/duplicate`, { method: 'POST' });
-      router.refresh();
+      navigate(() => router.refresh());
     });
 
   const remove = (q: QuizItem) => {
     if (!confirm(`Delete "${q.title}" and all of its published links? This cannot be undone.`)) return;
-    return run(`del${q.id}`, async () => {
+    return run(`del${q.id}`, async (navigate) => {
       await api(`/api/admin/quizzes/${q.id}`, { method: 'DELETE' });
-      router.refresh();
+      navigate(() => router.refresh());
     });
   };
 
   const publishLink = (q: QuizItem) =>
-    run(`pub${q.id}`, async () => {
+    run(`pub${q.id}`, async (navigate) => {
       setProblem(null);
       try {
         const s = await api<{ id: string }>('/api/admin/sessions', { method: 'POST', json: { quizId: q.id } });
-        router.push(`/admin/sessions/${s.id}`);
+        const target = `/admin/sessions/${s.id}`;
+        router.prefetch(target);
+        navigate(() => router.push(target));
       } catch (e) {
         if (e instanceof ApiError && e.code === 'quiz_invalid') {
           const issues = (e.data?.issues ?? []) as { message: string }[];
@@ -100,14 +118,26 @@ export function QuizList({ quizzes, sessions }: { quizzes: QuizItem[]; sessions:
     });
 
   return (
-    <div className="space-y-8">
+    <div className="animate-pageIn space-y-8">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-2xl font-bold text-white">Your quizzes</h1>
           <p className="text-sm text-slate-400">Build a quiz, then publish a shareable link for students to take at their own pace.</p>
         </div>
-        <button className="btn-primary" onClick={create} disabled={busy === 'new'}>
-          + New quiz
+        <button
+          className="btn-primary min-w-[132px]"
+          onClick={create}
+          disabled={isAnyBusy}
+          aria-busy={activeKey === 'new'}
+        >
+          {activeKey === 'new' ? (
+            <>
+              <Spinner />
+              Creating quiz…
+            </>
+          ) : (
+            '+ New quiz'
+          )}
         </button>
       </div>
 
@@ -152,9 +182,9 @@ export function QuizList({ quizzes, sessions }: { quizzes: QuizItem[]; sessions:
               </tr>
             )}
             {quizzes.map((q) => (
-              <tr key={q.id} className="hover:bg-slate-900">
+              <tr key={q.id} className="transition-colors duration-150 hover:bg-slate-900/80">
                 <td className="p-3 font-semibold text-white">
-                  <Link href={`/admin/quizzes/${q.id}`} className="hover:underline">
+                  <Link href={`/admin/quizzes/${q.id}`} className="transition-colors hover:text-violet-300 hover:underline">
                     {q.title}
                   </Link>
                 </td>
@@ -171,7 +201,7 @@ export function QuizList({ quizzes, sessions }: { quizzes: QuizItem[]; sessions:
                         <Link
                           key={lnk.id}
                           href={`/admin/sessions/${lnk.id}`}
-                          className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-1 text-xs font-semibold text-emerald-200 hover:border-emerald-400"
+                          className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-1 text-xs font-semibold text-emerald-200 transition-all duration-150 hover:-translate-y-[1px] hover:border-emerald-400 active:scale-[0.97]"
                         >
                           <span className="font-mono">{lnk.joinCode}</span>
                           <span className="text-emerald-300/80">· {STATUS_LABEL[lnk.status] ?? lnk.status}</span>
@@ -187,14 +217,50 @@ export function QuizList({ quizzes, sessions }: { quizzes: QuizItem[]; sessions:
                     <Link href={`/admin/quizzes/${q.id}`} className="btn-secondary">
                       Edit
                     </Link>
-                    <button className="btn-secondary" onClick={() => duplicate(q.id)} disabled={busy === `dup${q.id}`}>
-                      Duplicate
+                    <button
+                      className="btn-secondary"
+                      onClick={() => duplicate(q.id)}
+                      disabled={isAnyBusy}
+                      aria-busy={activeKey === `dup${q.id}`}
+                    >
+                      {activeKey === `dup${q.id}` ? (
+                        <>
+                          <Spinner />
+                          Duplicating…
+                        </>
+                      ) : (
+                        'Duplicate'
+                      )}
                     </button>
-                    <button className="btn-primary" onClick={() => publishLink(q)} disabled={busy === `pub${q.id}`}>
-                      {busy === `pub${q.id}` ? 'Publishing…' : 'Publish link'}
+                    <button
+                      className="btn-primary"
+                      onClick={() => publishLink(q)}
+                      disabled={isAnyBusy}
+                      aria-busy={activeKey === `pub${q.id}`}
+                    >
+                      {activeKey === `pub${q.id}` ? (
+                        <>
+                          <Spinner />
+                          Publishing…
+                        </>
+                      ) : (
+                        'Publish link'
+                      )}
                     </button>
-                    <button className="btn-danger" onClick={() => remove(q)} disabled={busy === `del${q.id}`}>
-                      Delete
+                    <button
+                      className="btn-danger"
+                      onClick={() => remove(q)}
+                      disabled={isAnyBusy}
+                      aria-busy={activeKey === `del${q.id}`}
+                    >
+                      {activeKey === `del${q.id}` ? (
+                        <>
+                          <Spinner />
+                          Deleting…
+                        </>
+                      ) : (
+                        'Delete'
+                      )}
                     </button>
                   </div>
                 </td>
@@ -212,7 +278,7 @@ export function QuizList({ quizzes, sessions }: { quizzes: QuizItem[]; sessions:
               <Link
                 key={s.id}
                 href={`/admin/sessions/${s.id}`}
-                className="panel flex items-center justify-between gap-3 hover:border-violet-500"
+                className="panel flex items-center justify-between gap-3 transition-all duration-200 ease-[cubic-bezier(0.22,1,0.36,1)] hover:-translate-y-0.5 hover:border-violet-500 active:scale-[0.99]"
               >
                 <div>
                   <div className="font-semibold text-white">{s.title}</div>

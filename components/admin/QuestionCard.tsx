@@ -5,6 +5,7 @@ import { useSortable } from '@dnd-kit/sortable';
 import type { EditableQuestion, QuizIssue } from '@/lib/validate-quiz';
 import { uploadFile } from './upload';
 import { PhonePreview } from './Previews';
+import { Spinner } from '@/components/ui/Spinner';
 import type { Theme } from '@/lib/types';
 
 const LETTERS = 'ABCDEF';
@@ -60,7 +61,7 @@ export function QuestionCard({
       ref={setNodeRef}
       style={{ transform: CSS.Transform.toString(transform), transition }}
       id={`q-${q.id}`}
-      className={`panel space-y-4 ${isDragging ? 'z-20 opacity-80 ring-2 ring-violet-500' : ''} ${issues.length ? 'border-amber-500/50' : ''}`}
+      className={`panel space-y-4 transition-colors duration-200 ${isDragging ? 'z-20 opacity-80 ring-2 ring-violet-500' : 'animate-cardIn'} ${issues.length ? 'border-amber-500/50' : ''}`}
     >
       <div className="flex flex-wrap items-center gap-2">
         <button
@@ -107,7 +108,14 @@ export function QuestionCard({
           </>
         ) : (
           <label className="btn-secondary cursor-pointer">
-            {uploading ? 'Uploading…' : '🖼 Add image (max 2 MB)'}
+            {uploading ? (
+              <>
+                <Spinner />
+                Uploading…
+              </>
+            ) : (
+              '🖼 Add image (max 2 MB)'
+            )}
             <input type="file" accept="image/png,image/jpeg,image/webp" className="hidden" onChange={(e) => upload(e.target.files?.[0])} />
           </label>
         )}
@@ -118,7 +126,7 @@ export function QuestionCard({
         {q.options.map((o, i) => (
           <div
             key={o.id}
-            className={`flex items-center gap-2 rounded-lg border p-2 ${o.is_correct ? 'border-emerald-500 bg-emerald-500/10' : 'border-slate-700 bg-slate-950/40'}`}
+            className={`flex items-center gap-2 rounded-lg border p-2 transition-colors duration-150 ${o.is_correct ? 'border-emerald-500 bg-emerald-500/10' : 'border-slate-700 bg-slate-950/40 hover:border-slate-600'}`}
           >
             <input
               type="radio"
@@ -164,8 +172,8 @@ export function QuestionCard({
       )}
 
       {preview && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4" onClick={() => setPreview(false)} role="dialog" aria-modal="true">
-          <div onClick={(e) => e.stopPropagation()} className="space-y-3">
+        <div className="fixed inset-0 z-50 flex animate-modalBackdrop items-center justify-center bg-black/70 p-4" onClick={() => setPreview(false)} role="dialog" aria-modal="true">
+          <div onClick={(e) => e.stopPropagation()} className="animate-modalPop space-y-3">
             <PhonePreview theme={theme} question={q} />
             <div className="text-center">
               <button className="btn-secondary" onClick={() => setPreview(false)}>Close preview</button>

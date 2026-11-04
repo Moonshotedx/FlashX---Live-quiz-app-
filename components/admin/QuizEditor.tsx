@@ -1,5 +1,5 @@
 'use client';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { DndContext, KeyboardSensor, PointerSensor, closestCenter, useSensor, useSensors, type DragEndEvent } from '@dnd-kit/core';
@@ -8,6 +8,7 @@ import { api, ApiError } from '@/lib/client-api';
 import { validateQuiz, type EditableQuestion } from '@/lib/validate-quiz';
 import { resolveTheme, sanitizeTheme } from '@/lib/theme';
 import type { QuizRow, ScoreVisibility, TeamMode, Theme } from '@/lib/types';
+import { Spinner } from '@/components/ui/Spinner';
 import { QuestionCard, newQuestion } from './QuestionCard';
 import { ThemeEditor } from './ThemeEditor';
 import { ImportModal } from './ImportModal';
@@ -52,6 +53,7 @@ export function QuizEditor({
   const [importing, setImporting] = useState(false);
   const [quickBuilding, setQuickBuilding] = useState(false);
   const [creating, setCreating] = useState(false);
+  const [isPublishingNav, startPublishNav] = useTransition();
   const [createIssues, setCreateIssues] = useState<string[]>([]);
   const [newTeam, setNewTeam] = useState('');
 
@@ -165,13 +167,16 @@ export function QuizEditor({
       clearTimeout(timer.current);
       await flush(); // ensure latest settings & questions are saved first
       const s = await api<{ id: string }>('/api/admin/sessions', { method: 'POST', json: { quizId } });
-      router.push(`/admin/sessions/${s.id}`);
+      const target = `/admin/sessions/${s.id}`;
+      router.prefetch(target);
+      startPublishNav(() => router.push(target));
     } catch (e) {
       if (e instanceof ApiError && e.code === 'quiz_invalid') {
         setCreateIssues(((e.data?.issues ?? []) as { message: string }[]).map((i) => i.message));
       } else {
         setCreateIssues([e instanceof Error ? e.message : 'Could not publish link']);
       }
+    } finally {
       setCreating(false);
     }
   };
@@ -210,8 +215,10 @@ export function QuizEditor({
       })),
     };
 
+  const publishBusy = creating || isPublishingNav;
+
   return (
-    <div className="space-y-6">
+    <div className="animate-pageIn space-y-6">
       <div className="flex flex-wrap items-center gap-3">
         <Link href="/admin" className="btn-ghost">
           ← Quizzes
@@ -224,7 +231,7 @@ export function QuizEditor({
           className="field min-w-[200px] flex-1 border-transparent bg-transparent text-xl font-bold hover:border-slate-700"
         />
         <span
-          className={`badge ${
+          className={`badge transition-colors duration-200 ${
             status === 'saved' ? 'bg-emerald-500/20 text-emerald-300' : status === 'error' ? 'bg-red-500/20 text-red-300' : 'bg-amber-500/20 text-amber-300'
           }`}
           role="status"
@@ -235,8 +242,15 @@ export function QuizEditor({
           {status === 'dirty' && 'Unsaved changes…'}
           {status === 'error' && `Error: ${saveError}. Retrying…`}
         </span>
-        <button className="btn-primary" onClick={publishLink} disabled={creating}>
-          {creating ? 'Publishing…' : '🔗 Publish link'}
+        <button className="btn-primary min-w-[144px]" onClick={publishLink} disabled={publishBusy} aria-busy={publishBusy}>
+          {publishBusy ? (
+            <>
+              <Spinner />
+              Publishing…
+            </>
+          ) : (
+            '🔗 Publish link'
+          )}
         </button>
       </div>
 
@@ -258,7 +272,7 @@ export function QuizEditor({
             role="tab"
             aria-selected={tab === t}
             onClick={() => setTab(t)}
-            className={`-mb-px border-b-2 px-4 py-2 text-sm font-semibold capitalize ${
+            className={`-mb-px select-none border-b-2 px-4 py-2 text-sm font-semibold capitalize transition-all duration-150 active:scale-[0.97] ${
               tab === t ? 'border-violet-500 text-white' : 'border-transparent text-slate-400 hover:text-slate-200'
             }`}
           >
@@ -268,7 +282,7 @@ export function QuizEditor({
       </div>
 
       {tab === 'questions' && (
-        <div className="space-y-4">
+        <div className="animate-pageIn space-y-4">
           {issues.length > 0 && (
             <div className="rounded-xl border border-amber-500/40 bg-amber-500/10 p-3 text-sm text-amber-100" role="status">
               <p className="font-semibold">
@@ -333,7 +347,7 @@ export function QuizEditor({
       )}
 
       {tab === 'settings' && (
-        <div className="grid gap-5 lg:grid-cols-2">
+        <div className="animate-pageIn grid gap-5 lg:grid-cols-2">
           <section className="panel space-y-4">
             <h3 className="font-bold text-white">General</h3>
             <div>
@@ -500,7 +514,11 @@ export function QuizEditor({
         </div>
       )}
 
-      {tab === 'theme' && <ThemeEditor theme={theme} onChange={updateTheme} sampleQuestion={sample} />}
+      {tab === 'theme' && (
+        <div className="animate-pageIn">
+          <ThemeEditor theme={theme} onChange={updateTheme} sampleQuestion={sample} />
+        </div>
+      )}
 
       {importing && <ImportModal onClose={() => setImporting(false)} onImport={(qs) => updateQuestions([...questions, ...qs])} />}
       {quickBuilding && (

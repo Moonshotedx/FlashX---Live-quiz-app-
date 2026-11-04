@@ -62,38 +62,40 @@ export function QuestionScreen(props: {
       </header>
 
       <main className="flex-1 space-y-4 px-4 pb-6 pt-4">
-        {q.imageUrl && (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img src={q.imageUrl} alt="" className="max-h-56 w-full rounded-xl object-contain" />
-        )}
-        <h1 className="whitespace-pre-wrap text-xl font-semibold leading-snug">{q.text}</h1>
+        <div key={q.id} className={props.compact ? 'space-y-4' : 'animate-pageIn space-y-4'}>
+          {q.imageUrl && (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={q.imageUrl} alt="" className="max-h-56 w-full rounded-xl object-contain" />
+          )}
+          <h1 className="whitespace-pre-wrap text-xl font-semibold leading-snug">{q.text}</h1>
 
-        <div className="space-y-3" role="radiogroup" aria-label="Answer options">
-          {q.options.map((o, i) => {
-            const selected = answers[q.id] === o.id;
-            return (
-              <button
-                key={o.id}
-                role="radio"
-                aria-checked={selected}
-                onClick={() => onSelect(q.id, o.id)}
-                className={`flex min-h-[56px] w-full items-center gap-3 rounded-xl border-2 px-4 py-3 text-left text-base font-medium transition active:scale-[.99] ${
-                  selected ? 'border-accent bg-primary text-white shadow-lg' : 'border-ink/15 bg-ink/5 hover:bg-ink/10'
-                }`}
-                style={selected ? { color: '#fff' } : undefined}
-              >
-                <span
-                  className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-sm font-bold ${
-                    selected ? 'bg-white text-black' : 'bg-ink/10'
+          <div className="space-y-3" role="radiogroup" aria-label="Answer options">
+            {q.options.map((o, i) => {
+              const selected = answers[q.id] === o.id;
+              return (
+                <button
+                  key={o.id}
+                  role="radio"
+                  aria-checked={selected}
+                  onClick={() => onSelect(q.id, o.id)}
+                  className={`flex min-h-[56px] w-full select-none items-center gap-3 rounded-xl border-2 px-4 py-3 text-left text-base font-medium transition-all duration-200 ease-[cubic-bezier(0.22,1,0.36,1)] hover:-translate-y-[1px] active:translate-y-0 active:scale-[0.98] active:duration-75 ${
+                    selected ? 'border-accent bg-primary text-white shadow-lg' : 'border-ink/15 bg-ink/5 hover:bg-ink/10'
                   }`}
+                  style={selected ? { color: '#fff' } : undefined}
                 >
-                  {selected ? '✓' : LETTERS[i]}
-                </span>
-                <span className="flex-1">{o.text}</span>
-                {selected && <span className="sr-only">Selected</span>}
-              </button>
-            );
-          })}
+                  <span
+                    className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-sm font-bold transition-transform duration-150 ${
+                      selected ? 'scale-105 bg-white text-black' : 'bg-ink/10'
+                    }`}
+                  >
+                    {selected ? '✓' : LETTERS[i]}
+                  </span>
+                  <span className="flex-1">{o.text}</span>
+                  {selected && <span className="sr-only">Selected</span>}
+                </button>
+              );
+            })}
+          </div>
         </div>
 
         <div className="flex items-center justify-between text-sm opacity-80">
@@ -118,8 +120,8 @@ export function QuestionScreen(props: {
                   onClick={() => onJump(i)}
                   aria-label={`Question ${i + 1}${done ? ', answered' : ', not answered'}`}
                   aria-current={current ? 'true' : undefined}
-                  className={`relative flex h-12 w-12 shrink-0 items-center justify-center rounded-full border-2 text-base font-bold ${
-                    current ? 'border-accent' : 'border-ink/20'
+                  className={`relative flex h-12 w-12 shrink-0 select-none items-center justify-center rounded-full border-2 text-base font-bold transition-all duration-150 active:scale-[0.93] ${
+                    current ? 'scale-105 border-accent shadow-md' : 'border-ink/20 hover:border-ink/40'
                   } ${done ? 'bg-primary text-white' : 'bg-ink/5'}`}
                 >
                   {i + 1}
@@ -135,18 +137,21 @@ export function QuestionScreen(props: {
         <button
           onClick={() => onJump(Math.max(0, index - 1))}
           disabled={index === 0}
-          className="min-h-[52px] rounded-xl bg-ink/10 text-base font-semibold disabled:opacity-30"
+          className="min-h-[52px] select-none rounded-xl bg-ink/10 text-base font-semibold transition-all duration-150 enabled:hover:bg-ink/15 enabled:active:scale-[0.96] disabled:opacity-30"
         >
           ← Prev
         </button>
         <button
           onClick={() => onJump(Math.min(questions.length - 1, index + 1))}
           disabled={index === questions.length - 1}
-          className="min-h-[52px] rounded-xl bg-ink/10 text-base font-semibold disabled:opacity-30"
+          className="min-h-[52px] select-none rounded-xl bg-ink/10 text-base font-semibold transition-all duration-150 enabled:hover:bg-ink/15 enabled:active:scale-[0.96] disabled:opacity-30"
         >
           Next →
         </button>
-        <button onClick={onSubmit} className="min-h-[52px] rounded-xl bg-accent text-base font-bold text-black">
+        <button
+          onClick={onSubmit}
+          className="min-h-[52px] select-none rounded-xl bg-accent text-base font-bold text-black shadow-md transition-all duration-150 hover:brightness-105 active:scale-[0.96]"
+        >
           Submit
         </button>
       </footer>

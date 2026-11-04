@@ -2,6 +2,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ThemeScope } from '@/components/ThemeScope';
 import { FlashXBadge, markVariantForText } from '@/components/brand/FlashXLogo';
+import { Spinner } from '@/components/ui/Spinner';
 import { QuestionScreen, type SaveState } from './QuestionScreen';
 import { useServerClock } from '@/lib/use-server-clock';
 import { subscribeToSession } from '@/lib/realtime';
@@ -561,7 +562,10 @@ function Message(p: { icon: string; title: string; text?: string; spinner?: bool
         {p.text && <p className="mt-3 text-base opacity-80">{p.text}</p>}
         {p.spinner && <div className="mx-auto mt-5 h-8 w-8 animate-spin rounded-full border-4 border-ink/20 border-t-accent" />}
         {p.action && (
-          <button onClick={p.action.onClick} className="mt-6 min-h-[52px] rounded-xl bg-primary px-6 text-base font-bold text-white">
+          <button
+            onClick={p.action.onClick}
+            className="mt-6 min-h-[52px] select-none rounded-xl bg-primary px-6 text-base font-bold text-white shadow-lg transition-all duration-200 ease-[cubic-bezier(0.22,1,0.36,1)] hover:-translate-y-0.5 active:translate-y-0 active:scale-[0.97] active:duration-75"
+          >
             {p.action.label}
           </button>
         )}
@@ -778,9 +782,17 @@ function DetailsForm({
 
         <button
           disabled={busy}
-          className="h-16 w-full rounded-2xl bg-primary text-xl font-extrabold text-white shadow-lg transition active:scale-[.98] disabled:opacity-60"
+          aria-busy={busy}
+          className="inline-flex h-16 w-full select-none items-center justify-center gap-2.5 rounded-2xl bg-primary text-xl font-extrabold text-white shadow-lg transition-all duration-200 ease-[cubic-bezier(0.22,1,0.36,1)] enabled:hover:-translate-y-0.5 enabled:hover:shadow-xl enabled:active:translate-y-0 enabled:active:scale-[0.97] enabled:active:duration-75 disabled:opacity-60 aria-[busy=true]:opacity-90"
         >
-          {busy ? 'Checking…' : 'Next →'}
+          {busy ? (
+            <>
+              <Spinner className="h-5 w-5" />
+              Checking…
+            </>
+          ) : (
+            'Next →'
+          )}
         </button>
       </form>
     </div>
@@ -858,9 +870,17 @@ function InstructionsScreen({
         <button
           onClick={handleStart}
           disabled={starting}
-          className="h-16 w-full rounded-2xl bg-primary text-xl font-extrabold text-white shadow-lg transition active:scale-[.98] disabled:opacity-60"
+          aria-busy={starting}
+          className="inline-flex h-16 w-full select-none items-center justify-center gap-2.5 rounded-2xl bg-primary text-xl font-extrabold text-white shadow-lg transition-all duration-200 ease-[cubic-bezier(0.22,1,0.36,1)] enabled:hover:-translate-y-0.5 enabled:hover:shadow-xl enabled:active:translate-y-0 enabled:active:scale-[0.97] enabled:active:duration-75 disabled:opacity-60 aria-[busy=true]:opacity-90"
         >
-          {starting ? 'Starting…' : 'Start'}
+          {starting ? (
+            <>
+              <Spinner className="h-5 w-5" />
+              Starting…
+            </>
+          ) : (
+            'Start'
+          )}
         </button>
       </div>
     </div>
@@ -931,12 +951,12 @@ function Confirm({
   const unanswered = total - answered;
   return (
     <div
-      className="fixed inset-0 z-50 flex items-end justify-center bg-black/60 p-4 sm:items-center"
+      className="fixed inset-0 z-50 flex animate-modalBackdrop items-end justify-center bg-black/60 p-4 sm:items-center"
       role="dialog"
       aria-modal="true"
       aria-labelledby="confirm-title"
     >
-      <div className="w-full max-w-sm animate-fadeUp rounded-2xl bg-slate-900 p-5 text-white shadow-2xl">
+      <div className="w-full max-w-sm animate-modalPop rounded-2xl bg-slate-900 p-5 text-white shadow-2xl">
         <h2 id="confirm-title" className="text-xl font-bold">
           You have answered {answered} of {total}. Submit now?
         </h2>
@@ -946,10 +966,16 @@ function Confirm({
           </p>
         )}
         <div className="mt-5 grid grid-cols-2 gap-3">
-          <button onClick={onCancel} className="min-h-[52px] rounded-xl bg-white/10 text-base font-semibold">
+          <button
+            onClick={onCancel}
+            className="min-h-[52px] select-none rounded-xl bg-white/10 text-base font-semibold transition-all duration-150 hover:bg-white/15 active:scale-[0.97]"
+          >
             Keep going
           </button>
-          <button onClick={onConfirm} className="min-h-[52px] rounded-xl bg-cyan-400 text-base font-bold text-black">
+          <button
+            onClick={onConfirm}
+            className="min-h-[52px] select-none rounded-xl bg-cyan-400 text-base font-bold text-black shadow-md transition-all duration-150 hover:bg-cyan-300 active:scale-[0.97]"
+          >
             Submit
           </button>
         </div>

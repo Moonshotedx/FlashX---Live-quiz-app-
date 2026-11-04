@@ -1,3 +1,4 @@
+import { cache } from 'react';
 import { createServerClient } from '@supabase/ssr';
 import { cookies } from 'next/headers';
 import type { User } from '@supabase/supabase-js';
@@ -33,11 +34,17 @@ export function isAdminUser(user: User | null): boolean {
   return !!user.email && allow.includes(user.email.toLowerCase());
 }
 
-/** Current logged in admin or null. Public sign ups are not admins unless seeded / allow listed. */
-export async function getAdmin(): Promise<User | null> {
+/** Request-scoped auth lookup so AdminLayout and child pages share one Supabase round-trip. */
+export const getAuthUser = cache(async (): Promise<User | null> => {
   const sb = await authClient();
   const { data } = await sb.auth.getUser();
-  return data.user && isAdminUser(data.user) ? data.user : null;
+  return data.user ?? null;
+});
+
+/** Current logged in admin or null. Public sign ups are not admins unless seeded / allow listed. */
+export async function getAdmin(): Promise<User | null> {
+  const user = await getAuthUser();
+  return user && isAdminUser(user) ? user : null;
 }
 
 export async function requireAdmin(): Promise<User> {

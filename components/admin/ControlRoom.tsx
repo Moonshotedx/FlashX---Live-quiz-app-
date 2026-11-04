@@ -7,6 +7,7 @@ import { subscribeToSession } from '@/lib/realtime';
 import { revealPlan } from '@/lib/reveal';
 import type { LeaderboardSummary, RankedRow, RevealMode, SessionStatus, TeamMode, TeamRankRow, Theme } from '@/lib/types';
 import { ThemeScope } from '@/components/ThemeScope';
+import { Spinner } from '@/components/ui/Spinner';
 
 interface Stats {
   serverNow: number;
@@ -272,13 +273,49 @@ export function ControlRoom({
   const planLen = revealPlan(Math.min(10, results?.rows.length ?? stats?.leaderboard.length ?? 0)).seq.length;
 
   if (!stats) {
-    return <div className="py-20 text-center text-slate-400">{error || 'Loading responses…'}</div>;
+    if (error) {
+      return (
+        <div className="panel py-14 text-center text-red-300" role="alert">
+          {error}
+        </div>
+      );
+    }
+    return (
+      <div className="animate-pageIn space-y-6" role="status" aria-label="Loading responses">
+        <div className="panel space-y-4">
+          <div className="flex items-start justify-between gap-3">
+            <div className="space-y-2">
+              <div className="skeleton h-4 w-20" />
+              <div className="skeleton h-8 w-64" />
+            </div>
+            <div className="skeleton h-7 w-24 rounded-full" />
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <div className="skeleton h-10 w-72 max-w-full rounded-lg" />
+            <div className="skeleton h-10 w-28 rounded-lg" />
+          </div>
+          <div className="flex flex-wrap gap-2 pt-1">
+            <div className="skeleton h-10 w-32 rounded-lg" />
+            <div className="skeleton h-10 w-44 rounded-lg" />
+            <div className="skeleton h-10 w-36 rounded-lg" />
+          </div>
+        </div>
+        <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
+          {[0, 1, 2, 3].map((k) => (
+            <div key={k} className="panel space-y-2">
+              <div className="skeleton h-3 w-24" />
+              <div className="skeleton h-9 w-16" />
+            </div>
+          ))}
+        </div>
+      </div>
+    );
   }
   const st = stats.status;
   const teamRows = results?.teamRows ?? stats.teamLeaderboard ?? [];
 
   return (
-    <div className="space-y-6">
+    <div className="animate-pageIn space-y-6">
       {/* Hidden high-res QR canvas for crisp PNG download */}
       <div className="pointer-events-none fixed -left-[9999px] top-0" aria-hidden>
         <QRCodeCanvas ref={qrCanvasRef} value={joinUrl} size={1024} level="M" marginSize={2} bgColor="#FFFFFF" fgColor="#000000" />
@@ -346,9 +383,17 @@ export function ControlRoom({
               <button
                 className="btn-secondary px-3 py-1.5 text-xs"
                 disabled={!!busy || !closesInput}
+                aria-busy={busy === 'closes'}
                 onClick={() => saveClosesAt(false)}
               >
-                Save
+                {busy === 'closes' ? (
+                  <>
+                    <Spinner className="h-3.5 w-3.5" />
+                    Saving…
+                  </>
+                ) : (
+                  'Save'
+                )}
               </button>
               {stats.closesAt && (
                 <button
@@ -369,21 +414,42 @@ export function ControlRoom({
         {/* Action controls */}
         <div className="flex flex-wrap items-center gap-2 border-t border-slate-800 pt-4">
           {st === 'live' && (
-            <button className="btn-danger" disabled={!!busy} onClick={() => act('close', () => post('close'))}>
-              ■ Close link
+            <button className="btn-danger" disabled={!!busy} aria-busy={busy === 'close'} onClick={() => act('close', () => post('close'))}>
+              {busy === 'close' ? (
+                <>
+                  <Spinner />
+                  Closing…
+                </>
+              ) : (
+                '■ Close link'
+              )}
             </button>
           )}
 
           {st === 'ended' && (
             <>
-              <button className="btn-primary" disabled={!!busy} onClick={() => requestPublish('auto')}>
-                🏆 Publish results
+              <button className="btn-primary" disabled={!!busy} aria-busy={busy === 'reveal'} onClick={() => requestPublish('auto')}>
+                {busy === 'reveal' ? (
+                  <>
+                    <Spinner />
+                    Publishing…
+                  </>
+                ) : (
+                  '🏆 Publish results'
+                )}
               </button>
               <button className="btn-secondary" disabled={!!busy} onClick={() => requestPublish('manual')}>
                 Publish (step-by-step)
               </button>
-              <button className="btn-secondary" disabled={!!busy} onClick={() => act('reopen', () => post('reopen'))}>
-                ↺ Reopen link
+              <button className="btn-secondary" disabled={!!busy} aria-busy={busy === 'reopen'} onClick={() => act('reopen', () => post('reopen'))}>
+                {busy === 'reopen' ? (
+                  <>
+                    <Spinner />
+                    Reopening…
+                  </>
+                ) : (
+                  '↺ Reopen link'
+                )}
               </button>
             </>
           )}
@@ -470,7 +536,7 @@ export function ControlRoom({
           <button
             type="button"
             onClick={() => setViewTab('responses')}
-            className={`-mb-px border-b-2 px-4 py-2 text-sm font-semibold ${
+            className={`-mb-px select-none border-b-2 px-4 py-2 text-sm font-semibold transition-all duration-150 active:scale-[0.97] ${
               viewTab === 'responses' ? 'border-violet-500 text-white' : 'border-transparent text-slate-400 hover:text-slate-200'
             }`}
           >
@@ -479,7 +545,7 @@ export function ControlRoom({
           <button
             type="button"
             onClick={() => setViewTab('teams')}
-            className={`-mb-px border-b-2 px-4 py-2 text-sm font-semibold ${
+            className={`-mb-px select-none border-b-2 px-4 py-2 text-sm font-semibold transition-all duration-150 active:scale-[0.97] ${
               viewTab === 'teams' ? 'border-violet-500 text-white' : 'border-transparent text-slate-400 hover:text-slate-200'
             }`}
           >
@@ -488,16 +554,20 @@ export function ControlRoom({
         </div>
 
         {viewTab === 'responses' ? (
-          <ResponsesTable
-            sessionId={sessionId}
-            people={people}
-            quizTeams={stats.teams}
-            totalQuestions={stats.totalQuestions}
-            now={now}
-            onChanged={() => Promise.all([pollPeople(), pollStats(), loadResults()])}
-          />
+          <div className="animate-pageIn">
+            <ResponsesTable
+              sessionId={sessionId}
+              people={people}
+              quizTeams={stats.teams}
+              totalQuestions={stats.totalQuestions}
+              now={now}
+              onChanged={() => Promise.all([pollPeople(), pollStats(), loadResults()])}
+            />
+          </div>
         ) : (
-          <TeamLeaderboardPanel teamRows={teamRows} />
+          <div className="animate-pageIn">
+            <TeamLeaderboardPanel teamRows={teamRows} />
+          </div>
         )}
       </div>
 
@@ -506,8 +576,8 @@ export function ControlRoom({
 
       {/* Publish warning modal when attempts are still in progress */}
       {publishConfirmMode && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4" role="dialog" aria-modal="true">
-          <div className="panel w-full max-w-md space-y-4">
+        <div className="fixed inset-0 z-50 flex animate-modalBackdrop items-center justify-center bg-black/70 p-4" role="dialog" aria-modal="true">
+          <div className="panel w-full max-w-md animate-modalPop space-y-4">
             <h2 className="text-lg font-bold text-white">Attempts still in progress</h2>
             <p className="text-sm text-slate-300">
               <b>{stats.inProgress}</b> {stats.inProgress === 1 ? 'student is' : 'students are'} still answering within their personal time limit.
@@ -535,8 +605,8 @@ export function ControlRoom({
 
       {/* Reset confirmation modal */}
       {resetOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4" role="dialog" aria-modal="true">
-          <div className="panel w-full max-w-md space-y-4">
+        <div className="fixed inset-0 z-50 flex animate-modalBackdrop items-center justify-center bg-black/70 p-4" role="dialog" aria-modal="true">
+          <div className="panel w-full max-w-md animate-modalPop space-y-4">
             <h2 className="text-lg font-bold text-white">Reset this link?</h2>
             <p className="text-sm text-slate-300">
               This deletes all participants and responses and reopens the link for fresh attempts. Type <b>RESET</b> to confirm.
@@ -555,6 +625,7 @@ export function ControlRoom({
               <button
                 className="btn-danger"
                 disabled={resetText !== 'RESET' || !!busy}
+                aria-busy={busy === 'reset'}
                 onClick={() =>
                   act('reset', async () => {
                     await post('reset', { confirm: 'RESET' });
@@ -563,7 +634,14 @@ export function ControlRoom({
                   })
                 }
               >
-                Reset responses
+                {busy === 'reset' ? (
+                  <>
+                    <Spinner />
+                    Resetting…
+                  </>
+                ) : (
+                  'Reset responses'
+                )}
               </button>
             </div>
           </div>

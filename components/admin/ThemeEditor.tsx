@@ -5,6 +5,7 @@ import type { EditableQuestion } from '@/lib/validate-quiz';
 import type { FontName, Theme } from '@/lib/types';
 import { uploadFile } from './upload';
 import { PhonePreview, PresenterPreview, type PreviewScreen } from './Previews';
+import { Spinner } from '@/components/ui/Spinner';
 
 const SAVED_KEY = 'quiz-saved-theme-presets';
 
@@ -80,7 +81,13 @@ export function ThemeEditor({ theme, onChange, sampleQuestion }: { theme: Theme;
           <h3 className="font-bold text-white">Presets</h3>
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
             {Object.entries(PRESETS).map(([id, p]) => (
-              <button key={id} onClick={() => applyPreset(p)} className={`overflow-hidden rounded-xl border-2 text-left ${theme.preset === id ? 'border-violet-400' : 'border-slate-700'}`}>
+              <button
+                key={id}
+                onClick={() => applyPreset(p)}
+                className={`overflow-hidden rounded-xl border-2 text-left transition-all duration-200 ease-[cubic-bezier(0.22,1,0.36,1)] hover:-translate-y-0.5 active:scale-[0.97] ${
+                  theme.preset === id ? 'border-violet-400 shadow-md shadow-violet-500/20' : 'border-slate-700 hover:border-slate-500'
+                }`}
+              >
                 <div className="h-14" style={{ background: backgroundCss(p) }}>
                   <div className="flex h-full items-end gap-1 p-2">
                     <span className="h-3 w-6 rounded" style={{ background: p.primaryColor }} />
@@ -114,7 +121,16 @@ export function ThemeEditor({ theme, onChange, sampleQuestion }: { theme: Theme;
               <img src={theme.logoUrl} alt="Logo" className="h-14 max-w-[160px] rounded bg-white/10 object-contain p-1" />
             )}
             <label className="btn-secondary cursor-pointer">
-              {uploading === 'logo' ? 'Uploading…' : theme.logoUrl ? 'Replace logo' : 'Upload logo (PNG, JPG, SVG, max 1 MB)'}
+              {uploading === 'logo' ? (
+                <>
+                  <Spinner />
+                  Uploading…
+                </>
+              ) : theme.logoUrl ? (
+                'Replace logo'
+              ) : (
+                'Upload logo (PNG, JPG, SVG, max 1 MB)'
+              )}
               <input type="file" accept="image/png,image/jpeg,image/svg+xml" className="hidden" onChange={(e) => upload('logo', e.target.files?.[0])} />
             </label>
             {theme.logoUrl && <button className="btn-ghost" onClick={() => set({ logoUrl: '' })}>Remove</button>}
@@ -157,7 +173,16 @@ export function ThemeEditor({ theme, onChange, sampleQuestion }: { theme: Theme;
           {theme.backgroundType === 'image' && (
             <div className="space-y-3">
               <label className="btn-secondary cursor-pointer">
-                {uploading === 'background' ? 'Uploading…' : theme.backgroundValue ? 'Replace image' : 'Upload background image (max 2 MB)'}
+                {uploading === 'background' ? (
+                  <>
+                    <Spinner />
+                    Uploading…
+                  </>
+                ) : theme.backgroundValue ? (
+                  'Replace image'
+                ) : (
+                  'Upload background image (max 2 MB)'
+                )}
                 <input type="file" accept="image/png,image/jpeg,image/webp" className="hidden" onChange={(e) => upload('background', e.target.files?.[0])} />
               </label>
               <div>

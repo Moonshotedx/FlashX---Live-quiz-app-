@@ -9,9 +9,12 @@ export default async function QuizEditorPage({ params }: { params: Promise<{ qui
   const { quizId } = await params;
   const admin = await getAdmin();
   if (!admin) redirect('/admin/login');
-  const quiz = await loadOwnedQuiz(quizId, admin.id).catch(() => null);
+  const [quiz, rawQuestions] = await Promise.all([
+    loadOwnedQuiz(quizId, admin.id).catch(() => null),
+    loadQuestions(quizId),
+  ]);
   if (!quiz) notFound();
-  const questions = toEditable(await loadQuestions(quizId));
+  const questions = toEditable(rawQuestions);
   return (
     <QuizEditor
       quizId={quiz.id}

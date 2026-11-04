@@ -349,12 +349,12 @@ export function QuickBuildModal({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-2 sm:p-4"
+      className="fixed inset-0 z-50 flex animate-modalBackdrop items-center justify-center bg-black/75 p-2 sm:p-4"
       role="dialog"
       aria-modal="true"
       aria-labelledby="quick-build-title"
     >
-      <div className="relative flex h-[94vh] w-full max-w-7xl flex-col overflow-hidden rounded-2xl border border-slate-800 bg-slate-950 shadow-2xl">
+      <div className="relative flex h-[94vh] w-full max-w-7xl animate-modalPop flex-col overflow-hidden rounded-2xl border border-slate-800 bg-slate-950 shadow-2xl">
         {/* Header */}
         <div className="flex items-center justify-between border-b border-slate-800 bg-slate-900/80 px-5 py-3.5">
           <div className="flex items-center gap-2.5">
@@ -570,7 +570,7 @@ export function QuickBuildModal({
                 return (
                   <div
                     key={card.id}
-                    className={`rounded-xl border p-4 transition ${
+                    className={`animate-cardIn rounded-xl border p-4 transition-colors duration-150 ${
                       hasBlocking
                         ? 'border-red-500/60 bg-red-950/15'
                         : 'border-slate-800 bg-slate-900/70'
@@ -803,12 +803,12 @@ export function QuickBuildModal({
         {/* Replace confirmation dialog (keeps panel + pasted text intact if cancelled) */}
         {confirmReplace && (
           <div
-            className="absolute inset-0 z-10 flex items-center justify-center bg-black/70 p-4"
+            className="absolute inset-0 z-10 flex animate-modalBackdrop items-center justify-center bg-black/70 p-4"
             role="alertdialog"
             aria-modal="true"
             aria-labelledby="qb-replace-title"
           >
-            <div className="panel w-full max-w-md space-y-4 border-amber-500/40 bg-slate-900 shadow-2xl">
+            <div className="panel w-full max-w-md animate-modalPop space-y-4 border-amber-500/40 bg-slate-900 shadow-2xl">
               <h3 id="qb-replace-title" className="text-lg font-bold text-white">
                 Replace existing questions?
               </h3>
