@@ -1,5 +1,5 @@
 import { performance } from 'node:perf_hooks';
-import { createServerClient } from '@supabase/ssr';
+import { db, pool, resolveDatabaseUrl, unwrap } from '../lib/server/db';
 
 const BASE = (process.env.BASE_URL ?? 'http://localhost:3000').replace(/\/$/, '');
 const COUNT = Number(process.env.PARTICIPANTS ?? 300);
@@ -28,27 +28,23 @@ function report(name: string, samples: number[], errors: number) {
 }
 
 async function createAdminCookie(email: string, password: string): Promise<string> {
-  const jar = new Map<string, string>();
-  const sb = createServerClient(
-    requireEnv('NEXT_PUBLIC_SUPABASE_URL'),
-    requireEnv('NEXT_PUBLIC_SUPABASE_ANON_KEY'),
-    {
-      cookies: {
-        getAll: () => [...jar.entries()].map(([name, value]) => ({ name, value })),
-        setAll: (list) => list.forEach(({ name, value }) => jar.set(name, value)),
-      },
-    },
-  );
-  const { error } = await sb.auth.signInWithPassword({ email, password });
-  if (error) throw new Error(`Admin login failed: ${error.message}`);
-  return [...jar.entries()].map(([k, v]) => `${k}=${v}`).join('; ');
+  const res = await fetch(`${BASE}/api/admin/auth/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email, password }),
+  });
+  if (!res.ok) throw new Error(`Admin login failed: ${await res.text()}`);
+  const setCookies =
+    typeof res.headers.getSetCookie === 'function'
+      ? res.headers.getSetCookie()
+      : [res.headers.get('set-cookie') ?? ''].filter(Boolean);
+  return setCookies.map((c) => c.split(';')[0]).filter(Boolean).join('; ');
 }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 async function main() {
-  const supabaseUrl = requireEnv('NEXT_PUBLIC_SUPABASE_URL');
-  const serviceKey = requireEnv('SUPABASE_SERVICE_ROLE_KEY');
+  resolveDatabaseUrl();
   const adminEmail = requireEnv('LOADTEST_ADMIN_EMAIL', 'SEED_ADMIN_EMAIL');
   const adminPassword = requireEnv('LOADTEST_ADMIN_PASSWORD', 'SEED_ADMIN_PASSWORD');
 
@@ -57,14 +53,10 @@ async function main() {
   );
   const cookie = await createAdminCookie(adminEmail, adminPassword);
 
-  const { createClient } = await import('@supabase/supabase-js');
-  const adminDb = createClient(supabaseUrl, serviceKey, { auth: { persistSession: false } });
-  const { data: quiz } = await adminDb
-    .from('quizzes')
-    .select('id, team_mode, teams')
-    .eq('title', 'Demo Tech Quiz')
-    .limit(1)
-    .single();
+  const quiz = unwrap<{ id: string; team_mode: string; teams: string[] } | null>(
+    await db().from('quizzes').select('id,team_mode,teams').eq('title', 'Demo Tech Quiz').limit(1).maybeSingle(),
+    'find Demo Tech Quiz',
+  );
   if (!quiz) throw new Error('Demo Tech Quiz not found — run `npm run seed` first');
 
   const defaultTeams = ['Team Alpha', 'Team Beta', 'Team Gamma', 'Team Delta'];
@@ -76,7 +68,7 @@ async function main() {
       : defaultTeams;
 
   if (quiz.team_mode === 'list' && (!quiz.teams || quiz.teams.length === 0)) {
-    await adminDb.from('quizzes').update({ teams: defaultTeams }).eq('id', quiz.id);
+    unwrap(await db().from('quizzes').update({ teams: defaultTeams }).eq('id', quiz.id), 'update Demo Tech Quiz teams');
   }
 
   // Publish self-paced link (status = 'live')
@@ -102,7 +94,6 @@ async function main() {
   try {
     await Promise.all(
       Array.from({ length: COUNT }, async (_, i) => {
-        // Random arrival time across the window
         const arrivalDelay = Math.floor(Math.random() * WINDOW_MS);
         if (arrivalDelay > 0) await sleep(arrivalDelay);
 
@@ -206,7 +197,8 @@ async function main() {
     }
     console.log(`\n✅ ${COUNT} self-paced students completed ${answerTimes.length} answer saves & submitted with ZERO errors!`);
   } finally {
-    await adminDb.from('sessions').delete().eq('id', sessionId);
+    await db().from('sessions').delete().eq('id', sessionId);
+    await pool().end();
   }
 }
 

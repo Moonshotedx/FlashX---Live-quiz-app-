@@ -90,11 +90,11 @@ export function sanitizeTheme(t: Theme): Theme {
     if (!HEX.test(out[k])) out[k] = DEFAULT_THEME[k];
   }
   if (out.backgroundType === 'solid' && !HEX.test(out.backgroundValue)) out.backgroundValue = out.gradientFrom;
-  if (out.backgroundType === 'image' && !/^https?:\/\//.test(out.backgroundValue)) {
+  if (out.backgroundType === 'image' && !/^(https?:\/\/|\/api\/assets\/)/.test(out.backgroundValue)) {
     out.backgroundType = 'gradient';
     out.backgroundValue = gradient(out.gradientFrom, out.gradientTo);
   }
-  if (out.logoUrl && !/^https?:\/\//.test(out.logoUrl)) out.logoUrl = '';
+  if (out.logoUrl && !/^(https?:\/\/|\/api\/assets\/)/.test(out.logoUrl)) out.logoUrl = '';
   return out;
 }
 

@@ -56,7 +56,7 @@ export function ThemeEditor({ theme, onChange, sampleQuestion }: { theme: Theme;
   const setBgType = (t: Theme['backgroundType']) => {
     if (t === 'solid') set({ backgroundType: t, backgroundValue: /^#/.test(theme.backgroundValue) ? theme.backgroundValue : theme.gradientFrom });
     else if (t === 'gradient') set({ backgroundType: t, backgroundValue: gradient(theme.gradientFrom, theme.gradientTo) });
-    else set({ backgroundType: t, backgroundValue: /^https?:/.test(theme.backgroundValue) ? theme.backgroundValue : '' });
+    else set({ backgroundType: t, backgroundValue: /^(https?:|\/api\/assets\/)/.test(theme.backgroundValue) ? theme.backgroundValue : '' });
   };
 
   const bg = effectiveBackgroundHex(theme);

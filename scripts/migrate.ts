@@ -1,24 +1,17 @@
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import pg from 'pg';
+import { parseDatabaseUrl, resolveDatabaseUrl } from '../lib/server/db';
 
-async function main() {
-  const rawConn =
-    process.env.POSTGRES_URL_NON_POOLING ||
-    process.env.POSTGRES_URL ||
-    process.env.DATABASE_URL;
-  if (!rawConn) {
-    throw new Error('Missing POSTGRES_URL_NON_POOLING, POSTGRES_URL, or DATABASE_URL');
-  }
-
-  // Strip sslmode parameter so pg uses our explicit TLS config cleanly with Supabase pooler/direct certs
-  const url = new URL(rawConn);
-  url.searchParams.delete('sslmode');
-  url.searchParams.delete('supa');
+export async function applyMigrations() {
+  const rawConn = resolveDatabaseUrl({ preferDirect: true });
+  const parsed = parseDatabaseUrl(rawConn);
 
   const client = new pg.Client({
-    connectionString: url.toString(),
-    ssl: { rejectUnauthorized: false },
+    connectionString: parsed.connectionString,
+    ssl: parsed.ssl,
+    ...(parsed.enableChannelBinding ? { enableChannelBinding: true } : {}),
   });
 
   await client.connect();
@@ -37,8 +30,10 @@ async function main() {
   }
 }
 
-main().catch((err) => {
-  console.error('Migration failed:', err);
-  process.exit(1);
-});
-
+const isMain = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
+if (isMain) {
+  applyMigrations().catch((err) => {
+    console.error('Migration failed:', err);
+    process.exit(1);
+  });
+}

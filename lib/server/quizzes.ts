@@ -1,5 +1,5 @@
 import { HttpError } from './api';
-import { db, unwrap } from './db';
+import { db, query } from './db';
 import type { EditableQuestion } from '../validate-quiz';
 import type { QuizRow, Snapshot } from '../types';
 
@@ -22,10 +22,34 @@ interface QuestionRowWithOptions {
 
 /** Questions with their options, ordered. Includes correctness: admin / server only. */
 export async function loadQuestions(quizId: string): Promise<QuestionRowWithOptions[]> {
-  const rows = unwrap(
-    await db().from('questions').select('id,position,text,image_url,points,options(id,position,text,is_correct)').eq('quiz_id', quizId).order('position'),
-    'questions',
-  ) as QuestionRowWithOptions[];
+  const { rows } = await query<QuestionRowWithOptions>(
+    `SELECT
+       q.id,
+       q.position,
+       q.text,
+       q.image_url,
+       q.points,
+       COALESCE(
+         (
+           SELECT json_agg(
+             json_build_object(
+               'id', o.id,
+               'position', o.position,
+               'text', o.text,
+               'is_correct', o.is_correct
+             )
+             ORDER BY o.position ASC
+           )
+           FROM options o
+           WHERE o.question_id = q.id
+         ),
+         '[]'::json
+       ) AS options
+     FROM questions q
+     WHERE q.quiz_id = $1
+     ORDER BY q.position ASC`,
+    [quizId],
+  );
   return rows.map((q) => ({ ...q, options: [...q.options].sort((a, b) => a.position - b.position) }));
 }
 

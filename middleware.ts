@@ -1,37 +1,26 @@
-import { createServerClient } from '@supabase/ssr';
 import { NextResponse, type NextRequest } from 'next/server';
+import { ADMIN_COOKIE_NAME, verifyAdminTokenEdge } from '@/lib/auth-edge';
 
-/** Refreshes the Supabase auth cookie and keeps /admin/* behind login (admin API routes also check on their own). */
+/** Keeps /admin/* behind login using the signed HttpOnly admin cookie (admin API routes also verify on their own). */
 export async function middleware(request: NextRequest) {
-  let response = NextResponse.next({ request });
-  const supabase = createServerClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!, {
-    cookies: {
-      getAll: () => request.cookies.getAll(),
-      setAll: (list) => {
-        list.forEach(({ name, value }) => request.cookies.set(name, value));
-        response = NextResponse.next({ request });
-        list.forEach(({ name, value, options }) => response.cookies.set(name, value, options));
-      },
-    },
-  });
-  const { data } = await supabase.auth.getUser();
+  const token = request.cookies.get(ADMIN_COOKIE_NAME)?.value;
+  const user = await verifyAdminTokenEdge(token);
   const path = request.nextUrl.pathname;
   const isLogin = path === '/admin/login';
 
-  if (!data.user && !isLogin) {
+  if (!user && !isLogin) {
     const url = request.nextUrl.clone();
     url.pathname = '/admin/login';
     url.search = `?next=${encodeURIComponent(path + request.nextUrl.search)}`;
     return NextResponse.redirect(url);
   }
-  if (data.user && isLogin) {
+  if (user && isLogin) {
     const url = request.nextUrl.clone();
     url.pathname = '/admin';
     url.search = '';
     return NextResponse.redirect(url);
   }
-  return response;
+  return NextResponse.next();
 }
 
 export const config = { matcher: ['/admin/:path*'] };
-

@@ -1,9 +1,8 @@
 import { handler, HttpError, parseBody } from '@/lib/server/api';
 import { requireAdmin } from '@/lib/server/auth';
-import { db, unwrap } from '@/lib/server/db';
+import { db, query, unwrap } from '@/lib/server/db';
 import { chunk, loadOwnedQuiz } from '@/lib/server/quizzes';
 import { questionsSchema } from '@/lib/server/schemas';
-import { fetchAll } from '@/lib/server/session';
 
 export const dynamic = 'force-dynamic';
 
@@ -25,10 +24,14 @@ export const PUT = handler<{ quizId: string }>(async (req, { quizId }) => {
   );
   const existingO = new Set(
     (
-      await fetchAll<{ id: string }>((from, to) =>
-        db().from('options').select('id, questions!inner(quiz_id)').eq('questions.quiz_id', quizId).order('id').range(from, to),
+      await query<{ id: string }>(
+        `SELECT o.id
+         FROM options o
+         JOIN questions q ON q.id = o.question_id
+         WHERE q.quiz_id = $1`,
+        [quizId],
       )
-    ).map((r) => r.id),
+    ).rows.map((r) => r.id),
   );
 
   // New ids must not collide with rows owned by another quiz (an upsert would overwrite them).
@@ -60,4 +63,3 @@ export const PUT = handler<{ quizId: string }>(async (req, { quizId }) => {
   await db().from('quizzes').update({ updated_at: now }).eq('id', quizId);
   return { ok: true, updatedAt: now };
 });
-

@@ -8,7 +8,7 @@
  * `sessions.started_at` records when the link was opened; `sessions.ends_at` is null and never used as a global timer.
  */
 import { HttpError } from './api';
-import { db, requireEnv, unwrap } from './db';
+import { db, query, unwrap } from './db';
 import { GRACE_MS, rankParticipants, scoreAnswers, timeTakenMs } from '../scoring';
 import type { ParticipantRow, QuizRow, RankedRow, SessionRow, Snapshot } from '../types';
 
@@ -16,7 +16,7 @@ export { GRACE_MS };
 
 export type SessionWithQuiz = SessionRow & { quizzes: QuizRow };
 
-/** Page through a PostgREST query (Supabase caps every response at 1000 rows by default). */
+/** Page through a query in fixed batches. */
 export async function fetchAll<T>(
   page: (from: number, to: number) => PromiseLike<{ data: T[] | null; error: { message: string } | null }>,
   size = 1000,
@@ -31,10 +31,16 @@ export async function fetchAll<T>(
 }
 
 export async function loadSession(id: string): Promise<SessionWithQuiz> {
-  const { data, error } = await db().from('sessions').select('*, quizzes!inner(*)').eq('id', id).maybeSingle();
-  if (error) throw new Error(error.message);
-  if (!data) throw new HttpError(404, 'not_found', 'Session not found');
-  return data as SessionWithQuiz;
+  const { rows } = await query<SessionWithQuiz>(
+    `SELECT s.*, to_jsonb(q) AS quizzes
+     FROM sessions s
+     JOIN quizzes q ON q.id = s.quiz_id
+     WHERE s.id = $1
+     LIMIT 1`,
+    [id],
+  );
+  if (!rows[0]) throw new HttpError(404, 'not_found', 'Session not found');
+  return rows[0];
 }
 
 /** Load a session for a verified admin (all event admins in the workspace share access). */
@@ -60,13 +66,9 @@ async function autoSubmitList(pending: ParticipantRow[], snapshot: Snapshot): Pr
 
   for (let i = 0; i < ids.length; i += 200) {
     const batch = ids.slice(i, i + 200);
-    const answers = await fetchAll<{ participant_id: string; question_id: string; option_id: string }>((from, to) =>
-      db()
-        .from('answers')
-        .select('participant_id,question_id,option_id')
-        .in('participant_id', batch)
-        .order('id')
-        .range(from, to),
+    const answers = unwrap<{ participant_id: string; question_id: string; option_id: string }[]>(
+      await db().from('answers').select('participant_id,question_id,option_id').in('participant_id', batch).order('id'),
+      'answers batch',
     );
     for (const a of answers) {
       const list = byParticipant.get(a.participant_id) ?? [];
@@ -132,16 +134,16 @@ export async function finalizeExpiredAttempts(
   if (active) return active;
 
   const task = (async () => {
-    const expired = await fetchAll<ParticipantRow>((from, to) =>
-      db()
+    const expired = unwrap<ParticipantRow[]>(
+      await db()
         .from('participants')
         .select('*')
         .eq('session_id', sessionId)
         .is('submitted_at', null)
         .not('started_at', 'is', null)
         .lt('ends_at', cutoff)
-        .order('id')
-        .range(from, to),
+        .order('id'),
+      'expired participants',
     );
     if (!expired.length) return;
     const snapshot = opts.snapshot ?? (await loadSnapshotOnly(sessionId));
@@ -174,37 +176,25 @@ export async function syncSession(s: SessionWithQuiz): Promise<SessionWithQuiz> 
 }
 
 export async function fetchSessionAnswers(sessionId: string) {
-  return fetchAll<{ participant_id: string; question_id: string; option_id: string }>((from, to) =>
-    db()
-      .from('answers')
-      .select('participant_id,question_id,option_id,participants!inner(session_id)')
-      .eq('participants.session_id', sessionId)
-      .order('id')
-      .range(from, to),
+  const { rows } = await query<{ participant_id: string; question_id: string; option_id: string }>(
+    `SELECT a.participant_id, a.question_id, a.option_id
+     FROM answers a
+     JOIN participants p ON p.id = a.participant_id
+     WHERE p.session_id = $1
+     ORDER BY a.id ASC`,
+    [sessionId],
   );
+  return rows;
 }
 
 export async function fetchParticipants(sessionId: string, opts: { includeRemoved?: boolean } = {}) {
-  return fetchAll<ParticipantRow>((from, to) => {
-    let q = db().from('participants').select('*').eq('session_id', sessionId);
-    if (!opts.includeRemoved) q = q.eq('is_removed', false);
-    return q.order('joined_at').order('id').range(from, to);
-  });
+  let q = db().from<ParticipantRow[]>('participants').select('*').eq('session_id', sessionId);
+  if (!opts.includeRemoved) q = q.eq('is_removed', false);
+  return unwrap(await q.order('joined_at').order('id'), 'fetchParticipants');
 }
 
-export async function broadcast(sessionId: string, event: string, payload: Record<string, unknown> = {}) {
-  try {
-    const key = requireEnv('SUPABASE_SERVICE_ROLE_KEY');
-    await fetch(`${requireEnv('NEXT_PUBLIC_SUPABASE_URL')}/realtime/v1/api/broadcast`, {
-      method: 'POST',
-      headers: { apikey: key, Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ messages: [{ topic: `session:${sessionId}`, event, payload }] }),
-      signal: AbortSignal.timeout(2500),
-    });
-  } catch (e) {
-    // Realtime is an optimisation; clients also poll, so never fail a request because of it.
-    console.warn('[broadcast] failed', e instanceof Error ? e.message : e);
-  }
+export async function broadcast(_sessionId: string, _event: string, _payload: Record<string, unknown> = {}) {
+  // Clients poll /state and /stats every ~2s on Neon; broadcast hook is kept as a safe no-op.
 }
 
 /** Rank submitted, non-removed participants. Unstarted and still-running attempts stay out of the leaderboard. */

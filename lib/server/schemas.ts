@@ -2,7 +2,11 @@ import { z } from 'zod';
 import { FONTS } from '../theme';
 
 const hex = z.string().regex(/^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/, 'Use a hex colour like #7C3AED');
-const urlOrEmpty = z.union([z.literal(''), z.string().url().max(1000)]);
+const assetOrHttpUrl = z.union([
+  z.string().url().max(1000),
+  z.string().regex(/^\/api\/assets\/[0-9a-fA-F-]{36}$/, 'Invalid asset path'),
+]);
+const urlOrEmpty = z.union([z.literal(''), assetOrHttpUrl]);
 
 export const themeSchema = z
   .object({
@@ -49,7 +53,7 @@ export const questionsSchema = z.object({
       z.object({
         id: z.string().uuid(),
         text: z.string().max(1000),
-        image_url: z.string().url().max(1000).nullable(),
+        image_url: assetOrHttpUrl.nullable(),
         points: z.number().int().min(0).max(100),
         options: z
           .array(z.object({ id: z.string().uuid(), text: z.string().max(300), is_correct: z.boolean() }))

@@ -1,5 +1,7 @@
-import { createClient } from '@supabase/supabase-js';
 import { PRESETS } from '../lib/theme';
+import { hashPassword } from '../lib/server/auth';
+import { db, pool, query, resolveDatabaseUrl, unwrap } from '../lib/server/db';
+import { applyMigrations } from './migrate';
 
 const DEMO_QUESTIONS: { text: string; options: string[]; correct: number }[] = [
   {
@@ -60,15 +62,7 @@ const DEMO_QUESTIONS: { text: string; options: string[]; correct: number }[] = [
 ];
 
 async function main() {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-  if (!url || !serviceKey) {
-    throw new Error('Missing NEXT_PUBLIC_SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY');
-  }
-
-  const supabase = createClient(url, serviceKey, {
-    auth: { persistSession: false, autoRefreshToken: false },
-  });
+  resolveDatabaseUrl();
 
   // 1. Collect admin accounts to create/update (passwords come strictly from env vars)
   const admins = new Map<string, string>();
@@ -99,135 +93,106 @@ async function main() {
     throw new Error('Provide SEED_ADMIN_EMAIL and SEED_ADMIN_PASSWORD in your environment before running seed');
   }
 
-  // List existing auth users to stay idempotent
-  const existingUsers = new Map<string, string>();
-  let page = 1;
-  for (;;) {
-    const { data, error } = await supabase.auth.admin.listUsers({ page, perPage: 200 });
-    if (error) throw new Error(`listUsers failed: ${error.message}`);
-    for (const u of data.users) {
-      if (u.email) existingUsers.set(u.email.toLowerCase(), u.id);
+  // 2. Ensure schema migrations are applied on Neon Postgres
+  await applyMigrations();
+
+  try {
+    let ownerId: string | null = null;
+    for (const [email, password] of admins) {
+      const { rows } = await query<{ id: string }>(
+        `INSERT INTO admins (email, password_hash)
+         VALUES ($1, $2)
+         ON CONFLICT (lower(email)) DO UPDATE SET password_hash = EXCLUDED.password_hash
+         RETURNING id`,
+        [email, hashPassword(password)],
+      );
+      console.log(`✓ Configured admin user: ${email}`);
+      if (!ownerId && rows[0]) ownerId = rows[0].id;
     }
-    if (data.users.length < 200) break;
-    page++;
-  }
 
-  let ownerId: string | null = null;
-  for (const [email, password] of admins) {
-    const existingId = existingUsers.get(email);
-    if (existingId) {
-      const { error } = await supabase.auth.admin.updateUserById(existingId, {
-        password,
-        email_confirm: true,
-        app_metadata: { role: 'admin' },
-      });
-      if (error) throw new Error(`Failed updating admin ${email}: ${error.message}`);
-      console.log(`✓ Updated admin user: ${email}`);
-      if (!ownerId) ownerId = existingId;
-    } else {
-      const { data, error } = await supabase.auth.admin.createUser({
-        email,
-        password,
-        email_confirm: true,
-        app_metadata: { role: 'admin' },
-      });
-      if (error || !data.user) throw new Error(`Failed creating admin ${email}: ${error?.message}`);
-      console.log(`✓ Created admin user: ${email}`);
-      if (!ownerId) ownerId = data.user.id;
+    // 3. Seed "Demo Tech Quiz" if not already present
+    const existingQuiz = unwrap<{ id: string; title: string; team_mode: string; teams: string[] } | null>(
+      await db().from('quizzes').select('id,title,team_mode,teams').eq('title', 'Demo Tech Quiz').limit(1).maybeSingle(),
+      'check Demo Tech Quiz',
+    );
+
+    if (existingQuiz) {
+      if (existingQuiz.team_mode === 'list' && (!existingQuiz.teams || existingQuiz.teams.length === 0)) {
+        unwrap(
+          await db()
+            .from('quizzes')
+            .update({ teams: ['Team Alpha', 'Team Beta', 'Team Gamma', 'Team Delta'] })
+            .eq('id', existingQuiz.id),
+          'update Demo Tech Quiz teams',
+        );
+      }
+      console.log(`✓ Sample quiz already exists: "${existingQuiz.title}" (${existingQuiz.id})`);
+      return;
     }
-  }
 
-  // 2. Ensure storage bucket exists
-  const { data: buckets } = await supabase.storage.listBuckets();
-  if (!buckets?.some((b) => b.id === 'quiz-assets')) {
-    const { error } = await supabase.storage.createBucket('quiz-assets', { public: true });
-    if (error && !error.message.toLowerCase().includes('already exists')) {
-      console.warn('Bucket creation warning:', error.message);
-    } else {
-      console.log('✓ Created public storage bucket: quiz-assets');
-    }
-  } else {
-    console.log('✓ Storage bucket ready: quiz-assets');
-  }
+    const theme = {
+      ...PRESETS['neon-dark'],
+      eventTitle: 'Demo Tech Quiz',
+    };
 
-  // 3. Seed "Demo Tech Quiz" if not already present
-  const { data: existingQuiz, error: findErr } = await supabase
-    .from('quizzes')
-    .select('id, title, team_mode, teams')
-    .eq('title', 'Demo Tech Quiz')
-    .limit(1)
-    .maybeSingle();
-  if (findErr) throw new Error(`Failed checking quizzes (did you run 0001_init.sql and 0002_self_paced.sql?): ${findErr.message}`);
-
-  if (existingQuiz) {
-    if (existingQuiz.team_mode === 'list' && (!existingQuiz.teams || existingQuiz.teams.length === 0)) {
-      await supabase
+    const quiz = unwrap<{ id: string }>(
+      await db()
         .from('quizzes')
-        .update({ teams: ['Team Alpha', 'Team Beta', 'Team Gamma', 'Team Delta'] })
-        .eq('id', existingQuiz.id);
+        .insert({
+          owner_id: ownerId!,
+          title: 'Demo Tech Quiz',
+          description: '10 general tech questions — 5 minutes per student!',
+          duration_seconds: 300,
+          shuffle_questions: false,
+          shuffle_options: false,
+          allow_late_join: true,
+          show_live_leaderboard: false,
+          show_answers_after_reveal: true,
+          roll_number_mode: 'off',
+          roll_number_label: 'Roll number / USN',
+          team_mode: 'list',
+          teams: ['Team Alpha', 'Team Beta', 'Team Gamma', 'Team Delta'],
+          email_required: true,
+          score_visibility: 'after_publish',
+          theme,
+        })
+        .select('id')
+        .single(),
+      'create Demo Tech Quiz',
+    );
+
+    for (let i = 0; i < DEMO_QUESTIONS.length; i++) {
+      const q = DEMO_QUESTIONS[i];
+      const qRow = unwrap<{ id: string }>(
+        await db()
+          .from('questions')
+          .insert({
+            quiz_id: quiz.id,
+            position: i + 1,
+            text: q.text,
+            points: 1,
+          })
+          .select('id')
+          .single(),
+        `insert question ${i + 1}`,
+      );
+
+      const optRows = q.options.map((text, idx) => ({
+        question_id: qRow.id,
+        position: idx + 1,
+        text,
+        is_correct: idx === q.correct,
+      }));
+      unwrap(await db().from('options').insert(optRows), `insert options ${i + 1}`);
     }
-    console.log(`✓ Sample quiz already exists: "${existingQuiz.title}" (${existingQuiz.id})`);
-    return;
+
+    console.log(`✓ Seeded "Demo Tech Quiz" with ${DEMO_QUESTIONS.length} questions (${quiz.id})`);
+  } finally {
+    await pool().end();
   }
-
-  const theme = {
-    ...PRESETS['neon-dark'],
-    eventTitle: 'Demo Tech Quiz',
-  };
-
-  const { data: quiz, error: quizErr } = await supabase
-    .from('quizzes')
-    .insert({
-      owner_id: ownerId!,
-      title: 'Demo Tech Quiz',
-      description: '10 general tech questions — 5 minutes per student!',
-      duration_seconds: 300,
-      shuffle_questions: false,
-      shuffle_options: false,
-      allow_late_join: true,
-      show_live_leaderboard: false,
-      show_answers_after_reveal: true,
-      roll_number_mode: 'off',
-      roll_number_label: 'Roll number / USN',
-      team_mode: 'list',
-      teams: ['Team Alpha', 'Team Beta', 'Team Gamma', 'Team Delta'],
-      email_required: true,
-      score_visibility: 'after_publish',
-      theme,
-    })
-    .select('id')
-    .single();
-  if (quizErr || !quiz) throw new Error(`Failed creating Demo Tech Quiz: ${quizErr?.message}`);
-
-  for (let i = 0; i < DEMO_QUESTIONS.length; i++) {
-    const q = DEMO_QUESTIONS[i];
-    const { data: qRow, error: qErr } = await supabase
-      .from('questions')
-      .insert({
-        quiz_id: quiz.id,
-        position: i + 1,
-        text: q.text,
-        points: 1,
-      })
-      .select('id')
-      .single();
-    if (qErr || !qRow) throw new Error(`Failed inserting question ${i + 1}: ${qErr?.message}`);
-
-    const optRows = q.options.map((text, idx) => ({
-      question_id: qRow.id,
-      position: idx + 1,
-      text,
-      is_correct: idx === q.correct,
-    }));
-    const { error: oErr } = await supabase.from('options').insert(optRows);
-    if (oErr) throw new Error(`Failed inserting options for question ${i + 1}: ${oErr.message}`);
-  }
-
-  console.log(`✓ Seeded "Demo Tech Quiz" with ${DEMO_QUESTIONS.length} questions (${quiz.id})`);
 }
 
 main().catch((err) => {
   console.error('Seed failed:', err);
   process.exit(1);
 });
-

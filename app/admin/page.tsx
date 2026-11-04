@@ -1,9 +1,17 @@
 import { redirect } from 'next/navigation';
 import { getAdmin } from '@/lib/server/auth';
-import { db, unwrap } from '@/lib/server/db';
+import { query } from '@/lib/server/db';
 import { QuizList, type QuizItem, type QuizLinkSummary, type SessionItem } from '@/components/admin/QuizList';
 
 export const dynamic = 'force-dynamic';
+
+interface RawQuiz {
+  id: string;
+  title: string;
+  updated_at: string;
+  duration_seconds: number;
+  question_count: number;
+}
 
 interface RawSession {
   id: string;
@@ -12,7 +20,8 @@ interface RawSession {
   status: string;
   closes_at: string | null;
   created_at: string;
-  quizzes: { title: string };
+  title: string;
+  submitted_count: number;
 }
 
 export default async function AdminHome() {
@@ -20,48 +29,55 @@ export default async function AdminHome() {
   if (!admin) redirect('/admin/login');
 
   const [qRes, openRes, recentRes] = await Promise.all([
-    db().from('quizzes').select('id,title,updated_at,duration_seconds,questions(count)').order('updated_at', { ascending: false }),
-    db()
-      .from('sessions')
-      .select('id,quiz_id,join_code,status,closes_at,created_at,quizzes!inner(title)')
-      .eq('status', 'live')
-      .order('created_at', { ascending: false }),
-    db()
-      .from('sessions')
-      .select('id,quiz_id,join_code,status,closes_at,created_at,quizzes!inner(title)')
-      .order('created_at', { ascending: false })
-      .limit(12),
+    query<RawQuiz>(
+      `SELECT
+         q.id,
+         q.title,
+         q.updated_at,
+         q.duration_seconds,
+         (SELECT count(*)::int FROM questions qu WHERE qu.quiz_id = q.id) AS question_count
+       FROM quizzes q
+       ORDER BY q.updated_at DESC`,
+    ),
+    query<RawSession>(
+      `SELECT
+         s.id,
+         s.quiz_id,
+         s.join_code,
+         s.status,
+         s.closes_at,
+         s.created_at,
+         q.title,
+         (SELECT count(*)::int FROM participants p WHERE p.session_id = s.id AND p.is_removed = FALSE AND p.submitted_at IS NOT NULL) AS submitted_count
+       FROM sessions s
+       JOIN quizzes q ON q.id = s.quiz_id
+       WHERE s.status = 'live'
+       ORDER BY s.created_at DESC`,
+    ),
+    query<RawSession>(
+      `SELECT
+         s.id,
+         s.quiz_id,
+         s.join_code,
+         s.status,
+         s.closes_at,
+         s.created_at,
+         q.title,
+         (SELECT count(*)::int FROM participants p WHERE p.session_id = s.id AND p.is_removed = FALSE AND p.submitted_at IS NOT NULL) AS submitted_count
+       FROM sessions s
+       JOIN quizzes q ON q.id = s.quiz_id
+       ORDER BY s.created_at DESC
+       LIMIT 12`,
+    ),
   ]);
-  const quizzes = unwrap<unknown[]>(qRes, 'quizzes') as (Omit<QuizItem, 'questionCount' | 'openLinks'> & {
-    questions: { count: number }[];
-  })[];
-  const openRows = unwrap<unknown[]>(openRes, 'open sessions') as RawSession[];
-  const recentRows = unwrap<unknown[]>(recentRes, 'recent sessions') as RawSession[];
 
   // Lazy auto-close display normalization if closes_at has passed
   const now = Date.now();
   const effectiveStatus = (s: RawSession) =>
     s.status === 'live' && s.closes_at && now >= new Date(s.closes_at).getTime() ? 'ended' : s.status;
 
-  const allSessionIds = [...new Set([...openRows.map((s) => s.id), ...recentRows.map((s) => s.id)])];
-  const submittedCounts = new Map<string, number>();
-  if (allSessionIds.length > 0) {
-    const submittedRows = unwrap<{ session_id: string }[]>(
-      await db()
-        .from('participants')
-        .select('session_id')
-        .in('session_id', allSessionIds)
-        .eq('is_removed', false)
-        .not('submitted_at', 'is', null),
-      'submitted counts',
-    );
-    for (const r of submittedRows) {
-      submittedCounts.set(r.session_id, (submittedCounts.get(r.session_id) ?? 0) + 1);
-    }
-  }
-
   const openByQuiz = new Map<string, QuizLinkSummary[]>();
-  for (const s of openRows) {
+  for (const s of openRes.rows) {
     const st = effectiveStatus(s);
     if (st !== 'live') continue;
     const list = openByQuiz.get(s.quiz_id) ?? [];
@@ -69,29 +85,29 @@ export default async function AdminHome() {
       id: s.id,
       joinCode: s.join_code,
       status: st,
-      submittedCount: submittedCounts.get(s.id) ?? 0,
+      submittedCount: s.submitted_count,
       createdAt: s.created_at,
     });
     openByQuiz.set(s.quiz_id, list);
   }
 
-  const items: QuizItem[] = quizzes.map((q) => ({
+  const items: QuizItem[] = qRes.rows.map((q) => ({
     id: q.id,
     title: q.title,
     updated_at: q.updated_at,
     duration_seconds: q.duration_seconds,
-    questionCount: q.questions?.[0]?.count ?? 0,
+    questionCount: q.question_count,
     openLinks: openByQuiz.get(q.id) ?? [],
   }));
 
-  const recent: SessionItem[] = recentRows.map((s) => ({
+  const recent: SessionItem[] = recentRes.rows.map((s) => ({
     id: s.id,
     quizId: s.quiz_id,
     joinCode: s.join_code,
     status: effectiveStatus(s),
-    submittedCount: submittedCounts.get(s.id) ?? 0,
+    submittedCount: s.submitted_count,
     createdAt: s.created_at,
-    title: s.quizzes.title,
+    title: s.title,
   }));
 
   return <QuizList quizzes={items} sessions={recent} />;

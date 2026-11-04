@@ -1,7 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import { z } from 'zod';
 import { clientIp, handler, HttpError, parseBody, rateLimit } from '@/lib/server/api';
-import { db, unwrap } from '@/lib/server/db';
+import { db, query, unwrap } from '@/lib/server/db';
 import { loadSessionByCode } from '@/lib/server/play';
 import { finalizeExpiredAttempts, syncSession } from '@/lib/server/session';
 import { normalizeJoinCode } from '@/lib/join-code';
@@ -44,17 +44,14 @@ const joinBody = z.object({
 const clean = (s: string) => s.replace(/[\u0000-\u001f\u007f]/g, '').replace(/\s+/g, ' ').trim();
 
 async function findExistingByEmail(sessionId: string, email: string): Promise<ParticipantRow | null> {
-  return unwrap<ParticipantRow | null>(
-    await db()
-      .from('participants')
-      .select('*')
-      .eq('session_id', sessionId)
-      .eq('is_removed', false)
-      .eq('email', email)
-      .limit(1)
-      .maybeSingle(),
-    'email check',
+  const { rows } = await query<ParticipantRow>(
+    `SELECT *
+     FROM participants
+     WHERE session_id = $1 AND is_removed = FALSE AND lower(email) = lower($2)
+     LIMIT 1`,
+    [sessionId, email],
   );
+  return rows[0] ?? null;
 }
 
 export const POST = handler<P>(async (req, { code }) => {

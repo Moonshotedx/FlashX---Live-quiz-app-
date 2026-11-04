@@ -1,7 +1,6 @@
 'use client';
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { supabaseBrowser } from '@/lib/supabase-browser';
 import { Spinner } from '@/components/ui/Spinner';
 
 export function SignOutButton() {
@@ -14,7 +13,7 @@ export function SignOutButton() {
       aria-busy={busy}
       onClick={async () => {
         setBusy(true);
-        await supabaseBrowser().auth.signOut();
+        await fetch('/api/admin/auth/logout', { method: 'POST' }).catch(() => null);
         router.replace('/admin/login');
         router.refresh();
       }}
@@ -30,4 +29,3 @@ export function SignOutButton() {
     </button>
   );
 }
-

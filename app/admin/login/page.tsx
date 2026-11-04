@@ -1,7 +1,6 @@
 'use client';
 import { Suspense, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { supabaseBrowser } from '@/lib/supabase-browser';
 import { FlashXLogo } from '@/components/brand/FlashXLogo';
 import { Spinner } from '@/components/ui/Spinner';
 
@@ -17,15 +16,25 @@ function LoginForm() {
     e.preventDefault();
     setBusy(true);
     setError('');
-    const { error } = await supabaseBrowser().auth.signInWithPassword({ email: email.trim(), password });
-    if (error) {
-      setError(error.message === 'Invalid login credentials' ? 'Wrong email or password.' : error.message);
+    try {
+      const res = await fetch('/api/admin/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: email.trim(), password }),
+      });
+      if (!res.ok) {
+        const payload = (await res.json().catch(() => ({}))) as { message?: string };
+        setError(payload.message || 'Wrong email or password.');
+        setBusy(false);
+        return;
+      }
+      const next = params.get('next');
+      router.replace(next && next.startsWith('/') && !next.startsWith('//') ? next : '/admin');
+      router.refresh();
+    } catch {
+      setError('Could not reach server. Please try again.');
       setBusy(false);
-      return;
     }
-    const next = params.get('next');
-    router.replace(next && next.startsWith('/') && !next.startsWith('//') ? next : '/admin');
-    router.refresh();
   };
 
   return (
@@ -67,4 +76,3 @@ export default function LoginPage() {
     </div>
   );
 }
-

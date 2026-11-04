@@ -146,7 +146,7 @@ describe('Security: correct answers never leak before reveal & no hardcoded pass
 
   it('verifies hardcoded seed admin password defaults are removed from docs, env template, and scripts', () => {
     const root = process.cwd();
-    for (const rel of ['.env.example', 'README.md', 'scripts/seed.ts', 'scripts/e2e.ts', 'scripts/loadtest.ts']) {
+    for (const rel of ['sample.env', '.env.example', 'README.md', 'scripts/seed.ts', 'scripts/e2e.ts', 'scripts/loadtest.ts']) {
       const src = readFileSync(join(root, rel), 'utf8');
       assert.equal(src.includes('12345678'), false, `${rel} must not contain hardcoded password 12345678`);
     }

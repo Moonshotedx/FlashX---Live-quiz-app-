@@ -1,9 +1,9 @@
--- Live Quiz App schema. Run in the Supabase SQL editor (or `npm run db:push` / `supabase db push`).
--- Admin users come from Supabase Auth (auth.users) with app_metadata.role = 'admin'.
+-- FlashX schema (PostgreSQL / Neon Postgres compatible).
+-- Apply via `npm run db:migrate`.
 
 create table if not exists quizzes (
   id uuid primary key default gen_random_uuid(),
-  owner_id uuid references auth.users not null,
+  owner_id uuid not null,
   title text not null,
   description text,
   duration_seconds int not null default 300,
@@ -89,75 +89,9 @@ create table if not exists answers (
 -- Answered counts per participant for the control room (avoids pulling every answer row every few seconds).
 create or replace function session_answer_counts(sid uuid)
 returns table (participant_id uuid, answered bigint)
-language sql stable security invoker as $$
+language sql stable as $$
   select a.participant_id, count(*)::bigint
   from answers a join participants p on p.id = a.participant_id
   where p.session_id = sid
   group by a.participant_id
 $$;
-revoke all on function session_answer_counts(uuid) from public, anon, authenticated;
-grant execute on function session_answer_counts(uuid) to service_role;
-
--- ---------------------------------------------------------------------------
--- Row Level Security. The anon role gets no policies, so it has no table access.
--- All participant traffic goes through Next.js route handlers using the service role.
--- Verified admins (app_metadata.role = 'admin' or quiz owner) can manage quizzes.
--- ---------------------------------------------------------------------------
-alter table quizzes enable row level security;
-alter table questions enable row level security;
-alter table options enable row level security;
-alter table sessions enable row level security;
-alter table participants enable row level security;
-alter table answers enable row level security;
-
-create or replace function is_quiz_admin()
-returns boolean
-language sql stable as $$
-  select coalesce((auth.jwt() -> 'app_metadata' ->> 'role') = 'admin', false)
-$$;
-
-drop policy if exists quizzes_owner on quizzes;
-create policy quizzes_owner on quizzes for all to authenticated
-  using (owner_id = auth.uid() or is_quiz_admin())
-  with check (owner_id = auth.uid() or is_quiz_admin());
-
-drop policy if exists questions_owner on questions;
-create policy questions_owner on questions for all to authenticated
-  using (exists (select 1 from quizzes q where q.id = questions.quiz_id and (q.owner_id = auth.uid() or is_quiz_admin())))
-  with check (exists (select 1 from quizzes q where q.id = questions.quiz_id and (q.owner_id = auth.uid() or is_quiz_admin())));
-
-drop policy if exists options_owner on options;
-create policy options_owner on options for all to authenticated
-  using (exists (select 1 from questions qu join quizzes q on q.id = qu.quiz_id
-                 where qu.id = options.question_id and (q.owner_id = auth.uid() or is_quiz_admin())))
-  with check (exists (select 1 from questions qu join quizzes q on q.id = qu.quiz_id
-                 where qu.id = options.question_id and (q.owner_id = auth.uid() or is_quiz_admin())));
-
-drop policy if exists sessions_owner on sessions;
-create policy sessions_owner on sessions for all to authenticated
-  using (exists (select 1 from quizzes q where q.id = sessions.quiz_id and (q.owner_id = auth.uid() or is_quiz_admin())))
-  with check (exists (select 1 from quizzes q where q.id = sessions.quiz_id and (q.owner_id = auth.uid() or is_quiz_admin())));
-
-drop policy if exists participants_owner on participants;
-create policy participants_owner on participants for all to authenticated
-  using (exists (select 1 from sessions s join quizzes q on q.id = s.quiz_id
-                 where s.id = participants.session_id and (q.owner_id = auth.uid() or is_quiz_admin())))
-  with check (exists (select 1 from sessions s join quizzes q on q.id = s.quiz_id
-                 where s.id = participants.session_id and (q.owner_id = auth.uid() or is_quiz_admin())));
-
-drop policy if exists answers_owner on answers;
-create policy answers_owner on answers for all to authenticated
-  using (exists (select 1 from participants p join sessions s on s.id = p.session_id
-                 join quizzes q on q.id = s.quiz_id
-                 where p.id = answers.participant_id and (q.owner_id = auth.uid() or is_quiz_admin())))
-  with check (exists (select 1 from participants p join sessions s on s.id = p.session_id
-                 join quizzes q on q.id = s.quiz_id
-                 where p.id = answers.participant_id and (q.owner_id = auth.uid() or is_quiz_admin())));
-
--- ---------------------------------------------------------------------------
--- Storage: public bucket for logos and question images. Uploads go through the
--- admin-only /api/admin/upload route (service role), so no storage policies are needed for writes.
--- ---------------------------------------------------------------------------
-insert into storage.buckets (id, name, public)
-values ('quiz-assets', 'quiz-assets', true)
-on conflict (id) do nothing;
