@@ -93,7 +93,7 @@ export function parseDatabaseUrl(raw: string): ParsedDatabaseUrl {
 /** Resolve the configured Postgres URL (supports `DATABASE_URL` and Vercel/Neon `POSTGRES_URL*` aliases). */
 export function resolveDatabaseUrl(opts: { preferDirect?: boolean } = {}): string {
   const keys = opts.preferDirect
-    ? ['DATABASE_URL_UNPOOLED', 'POSTGRES_URL_NON_POOLING', 'DATABASE_URL', 'POSTGRES_URL']
+    ? ['DATABASE_URL_UNPOOLED', 'DATABASE_URL', 'POSTGRES_URL_NON_POOLING', 'POSTGRES_URL']
     : ['DATABASE_URL', 'POSTGRES_URL', 'DATABASE_URL_UNPOOLED', 'POSTGRES_URL_NON_POOLING'];
 
   for (const key of keys) {
