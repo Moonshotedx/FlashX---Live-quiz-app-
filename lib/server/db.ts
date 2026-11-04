@@ -138,7 +138,13 @@ export async function query<T extends QueryResultRow = QueryResultRow>(
   values: unknown[] = [],
 ): Promise<{ rows: T[]; rowCount: number }> {
   const res = await pool().query<T>(text, values);
-  return { rows: res.rows, rowCount: res.rowCount ?? res.rows.length };
+  if (Array.isArray(res)) {
+    const last = res[res.length - 1];
+    const rows = (last?.rows ?? []) as T[];
+    return { rows, rowCount: last?.rowCount ?? rows.length };
+  }
+  const rows = (res?.rows ?? []) as T[];
+  return { rows, rowCount: res?.rowCount ?? rows.length };
 }
 
 // ---------------------------------------------------------------------------

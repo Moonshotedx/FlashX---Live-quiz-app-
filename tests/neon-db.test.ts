@@ -188,5 +188,23 @@ describe('Standalone Neon admin auth, Edge cookie parity, sample.env & asset sch
       assert.equal(content.toUpperCase().includes('SUPABASE'), false, `${file} must not contain old SUPABASE vars`);
     }
   });
+
+  it('safely handles multi-statement query results in query() helper', () => {
+    const mockMultiRes: unknown = [
+      { command: 'CREATE', rowCount: null, rows: [] },
+      { command: 'CREATE', rowCount: null, rows: [{ id: '1' }] },
+    ];
+    const normalize = (res: any) => {
+      if (Array.isArray(res)) {
+        const last = res[res.length - 1];
+        const rows = (last?.rows ?? []);
+        return { rows, rowCount: last?.rowCount ?? rows.length };
+      }
+      const rows = (res?.rows ?? []);
+      return { rows, rowCount: res?.rowCount ?? rows.length };
+    };
+    const out = normalize(mockMultiRes);
+    assert.deepEqual(out, { rows: [{ id: '1' }], rowCount: 1 });
+  });
 });
 

@@ -28,8 +28,10 @@ async function ensureAdminsTable() {
       email text NOT NULL,
       password_hash text NOT NULL,
       created_at timestamptz NOT NULL DEFAULT now()
-    );
-    CREATE UNIQUE INDEX IF NOT EXISTS admins_email_lower_uq ON admins (lower(email));
+    )
+  `);
+  await query(`
+    CREATE UNIQUE INDEX IF NOT EXISTS admins_email_lower_uq ON admins (lower(email))
   `);
   adminsTableReady = true;
 }
