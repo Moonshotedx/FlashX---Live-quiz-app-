@@ -4,6 +4,7 @@ import { ThemeScope } from '@/components/ThemeScope';
 import { FlashXBadge, markVariantForText } from '@/components/brand/FlashXLogo';
 import { Spinner } from '@/components/ui/Spinner';
 import { QuestionScreen, type SaveState } from './QuestionScreen';
+import { TeamSelect } from './TeamSelect';
 import { useServerClock } from '@/lib/use-server-clock';
 import { subscribeToSession } from '@/lib/realtime';
 import { resolveTheme } from '@/lib/theme';
@@ -722,25 +723,16 @@ function DetailsForm({
             <label htmlFor="team" className="mb-1.5 block text-sm font-semibold">
               Team
             </label>
-            <select
+            <TeamSelect
               id="team"
               value={team}
-              onChange={(e) => {
-                setTeam(e.target.value);
+              onChange={(val) => {
+                setTeam(val);
                 if (fieldErrors.team) setFieldErrors((p) => ({ ...p, team: undefined }));
               }}
-              aria-invalid={!!fieldErrors.team}
-              className="h-14 w-full rounded-xl border-2 border-ink/20 bg-ink/10 px-4 text-lg text-ink focus:border-accent focus:outline-none"
-            >
-              <option value="" className="bg-slate-900 text-slate-300">
-                Select your team…
-              </option>
-              {info.teams.map((t) => (
-                <option key={t} value={t} className="bg-slate-900 text-white">
-                  {t}
-                </option>
-              ))}
-            </select>
+              teams={info.teams}
+              hasError={!!fieldErrors.team}
+            />
             {fieldErrors.team && (
               <p role="alert" className="mt-1 text-xs font-semibold text-bad">
                 {fieldErrors.team}

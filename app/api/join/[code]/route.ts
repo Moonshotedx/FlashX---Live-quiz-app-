@@ -6,6 +6,7 @@ import { loadSessionByCode } from '@/lib/server/play';
 import { finalizeExpiredAttempts, syncSession } from '@/lib/server/session';
 import { normalizeJoinCode } from '@/lib/join-code';
 import { isProfane } from '@/lib/profanity';
+import { resolveTeamList } from '@/lib/teams';
 import type { ParticipantRow } from '@/lib/types';
 
 export const dynamic = 'force-dynamic';
@@ -27,7 +28,7 @@ export const GET = handler<P>(async (req, { code }) => {
     durationSeconds: session.duration_seconds,
     questionCount: session.quiz_snapshot?.questions.length ?? 0,
     teamMode: q.team_mode,
-    teams: q.teams ?? [],
+    teams: resolveTeamList(q.teams),
     emailRequired: q.email_required,
     scoreVisibility: q.score_visibility,
   };
@@ -90,7 +91,8 @@ export const POST = handler<P>(async (req, { code }) => {
   if (quiz.team_mode === 'list') {
     const picked = (body.team ?? '').trim();
     if (!picked) throw new HttpError(400, 'team_required', 'Please select your team.');
-    const allowed = (quiz.teams ?? []).find((t) => t === picked);
+    const allowedList = resolveTeamList(quiz.teams);
+    const allowed = allowedList.find((t) => t.toLowerCase() === picked.toLowerCase()) ?? allowedList.find((t) => t === picked);
     if (!allowed) throw new HttpError(400, 'invalid_team', 'Please choose a valid team from the list.');
     team = allowed;
   } else if (quiz.team_mode === 'free') {

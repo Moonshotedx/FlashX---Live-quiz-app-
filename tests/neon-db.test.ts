@@ -206,5 +206,21 @@ describe('Standalone Neon admin auth, Edge cookie parity, sample.env & asset sch
     const out = normalize(mockMultiRes);
     assert.deepEqual(out, { rows: [{ id: '1' }], rowCount: 1 });
   });
+
+  it('provides 191 hardcoded teams and resolves team list correctly', async () => {
+    const { HARDCODED_TEAMS, resolveTeamList } = await import('../lib/teams');
+    assert.equal(HARDCODED_TEAMS.length, 191);
+    assert.ok(HARDCODED_TEAMS.includes('Transformers'));
+    assert.ok(HARDCODED_TEAMS.includes('Beyond The Bin'));
+    assert.ok(HARDCODED_TEAMS.includes('Innovation hub'));
+
+    // When custom teams provided, they appear first and deduplicate
+    const resolved = resolveTeamList(['Custom Alpha', 'Transformers', 'Custom Beta']);
+    assert.equal(resolved[0], 'Custom Alpha');
+    assert.equal(resolved[1], 'Transformers');
+    assert.equal(resolved[2], 'Custom Beta');
+    assert.equal(resolved.filter((t) => t === 'Transformers').length, 1);
+    assert.equal(resolved.length, 193); // 2 new + 191
+  });
 });
 
