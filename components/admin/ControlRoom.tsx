@@ -1,5 +1,6 @@
 'use client';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import Link from 'next/link';
 import { QRCodeCanvas } from 'qrcode.react';
 import { api, formatDuration, mmss } from '@/lib/client-api';
@@ -575,78 +576,84 @@ export function ControlRoom({
       {results && <ResultsPanel sessionId={sessionId} quizTitle={quizTitle} theme={stats.theme} results={results} />}
 
       {/* Publish warning modal when attempts are still in progress */}
-      {publishConfirmMode && (
-        <div className="fixed inset-0 z-50 flex animate-modalBackdrop items-center justify-center bg-black/70 p-4" role="dialog" aria-modal="true">
-          <div className="panel w-full max-w-md animate-modalPop space-y-4">
-            <h2 className="text-lg font-bold text-white">Attempts still in progress</h2>
-            <p className="text-sm text-slate-300">
-              <b>{stats.inProgress}</b> {stats.inProgress === 1 ? 'student is' : 'students are'} still answering within their personal time limit.
-              If you publish results now, their running attempts will not be interrupted and will appear on the leaderboard once they submit or expire.
-            </p>
-            <div className="flex justify-end gap-2">
-              <button className="btn-secondary" onClick={() => setPublishConfirmMode(null)}>
-                Wait
-              </button>
-              <button
-                className="btn-primary"
-                disabled={!!busy}
-                onClick={() => {
-                  const m = publishConfirmMode;
-                  setPublishConfirmMode(null);
-                  act('reveal', () => post('reveal', { action: 'start', mode: m }));
-                }}
-              >
-                Publish results anyway
-              </button>
+      {publishConfirmMode &&
+        typeof document !== 'undefined' &&
+        createPortal(
+          <div className="fixed inset-0 z-50 flex animate-modalBackdrop items-center justify-center bg-black/70 p-4" role="dialog" aria-modal="true">
+            <div className="panel w-full max-w-md animate-modalPop space-y-4">
+              <h2 className="text-lg font-bold text-white">Attempts still in progress</h2>
+              <p className="text-sm text-slate-300">
+                <b>{stats.inProgress}</b> {stats.inProgress === 1 ? 'student is' : 'students are'} still answering within their personal time limit.
+                If you publish results now, their running attempts will not be interrupted and will appear on the leaderboard once they submit or expire.
+              </p>
+              <div className="flex justify-end gap-2">
+                <button className="btn-secondary" onClick={() => setPublishConfirmMode(null)}>
+                  Wait
+                </button>
+                <button
+                  className="btn-primary"
+                  disabled={!!busy}
+                  onClick={() => {
+                    const m = publishConfirmMode;
+                    setPublishConfirmMode(null);
+                    act('reveal', () => post('reveal', { action: 'start', mode: m }));
+                  }}
+                >
+                  Publish results anyway
+                </button>
+              </div>
             </div>
-          </div>
-        </div>
-      )}
+          </div>,
+          document.body,
+        )}
 
       {/* Reset confirmation modal */}
-      {resetOpen && (
-        <div className="fixed inset-0 z-50 flex animate-modalBackdrop items-center justify-center bg-black/70 p-4" role="dialog" aria-modal="true">
-          <div className="panel w-full max-w-md animate-modalPop space-y-4">
-            <h2 className="text-lg font-bold text-white">Reset this link?</h2>
-            <p className="text-sm text-slate-300">
-              This deletes all participants and responses and reopens the link for fresh attempts. Type <b>RESET</b> to confirm.
-            </p>
-            <input className="field" value={resetText} onChange={(e) => setResetText(e.target.value)} autoFocus aria-label="Type RESET" />
-            <div className="flex justify-end gap-2">
-              <button
-                className="btn-secondary"
-                onClick={() => {
-                  setResetOpen(false);
-                  setResetText('');
-                }}
-              >
-                Cancel
-              </button>
-              <button
-                className="btn-danger"
-                disabled={resetText !== 'RESET' || !!busy}
-                aria-busy={busy === 'reset'}
-                onClick={() =>
-                  act('reset', async () => {
-                    await post('reset', { confirm: 'RESET' });
+      {resetOpen &&
+        typeof document !== 'undefined' &&
+        createPortal(
+          <div className="fixed inset-0 z-50 flex animate-modalBackdrop items-center justify-center bg-black/70 p-4" role="dialog" aria-modal="true">
+            <div className="panel w-full max-w-md animate-modalPop space-y-4">
+              <h2 className="text-lg font-bold text-white">Reset this link?</h2>
+              <p className="text-sm text-slate-300">
+                This deletes all participants and responses and reopens the link for fresh attempts. Type <b>RESET</b> to confirm.
+              </p>
+              <input className="field" value={resetText} onChange={(e) => setResetText(e.target.value)} autoFocus aria-label="Type RESET" />
+              <div className="flex justify-end gap-2">
+                <button
+                  className="btn-secondary"
+                  onClick={() => {
                     setResetOpen(false);
                     setResetText('');
-                  })
-                }
-              >
-                {busy === 'reset' ? (
-                  <>
-                    <Spinner />
-                    Resetting…
-                  </>
-                ) : (
-                  'Reset responses'
-                )}
-              </button>
+                  }}
+                >
+                  Cancel
+                </button>
+                <button
+                  className="btn-danger"
+                  disabled={resetText !== 'RESET' || !!busy}
+                  aria-busy={busy === 'reset'}
+                  onClick={() =>
+                    act('reset', async () => {
+                      await post('reset', { confirm: 'RESET' });
+                      setResetOpen(false);
+                      setResetText('');
+                    })
+                  }
+                >
+                  {busy === 'reset' ? (
+                    <>
+                      <Spinner />
+                      Resetting…
+                    </>
+                  ) : (
+                    'Reset responses'
+                  )}
+                </button>
+              </div>
             </div>
-          </div>
-        </div>
-      )}
+          </div>,
+          document.body,
+        )}
     </div>
   );
 }

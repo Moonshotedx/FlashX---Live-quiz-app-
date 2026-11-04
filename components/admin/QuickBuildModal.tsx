@@ -1,5 +1,6 @@
 'use client';
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import {
   MAX_OPTIONS,
   MAX_OPTION_CHARS,
@@ -180,6 +181,16 @@ export function QuickBuildModal({
   const [bulkPoints, setBulkPoints] = useState(1);
   const [confirmReplace, setConfirmReplace] = useState(false);
   const [uploadError, setUploadError] = useState('');
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    setMounted(true);
+    const origOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => {
+      document.body.style.overflow = origOverflow;
+    };
+  }, []);
 
   const skipDebounceRef = useRef(false);
   const defaultPointsRef = useRef(defaultPoints);
@@ -347,7 +358,9 @@ export function QuickBuildModal({
     primaryLabel = `Add ${cards.length} question${cards.length === 1 ? '' : 's'}`;
   }
 
-  return (
+  if (!mounted) return null;
+
+  return createPortal(
     <div
       className="fixed inset-0 z-50 flex animate-modalBackdrop items-center justify-center bg-black/75 p-2 sm:p-4"
       role="dialog"
@@ -835,7 +848,8 @@ export function QuickBuildModal({
           </div>
         )}
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }
 

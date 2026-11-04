@@ -1,5 +1,6 @@
 'use client';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { CSV_TEMPLATE, parseQuestionCsv, type ImportRow } from '@/lib/csv';
 import type { EditableQuestion } from '@/lib/validate-quiz';
 
@@ -7,6 +8,16 @@ import type { EditableQuestion } from '@/lib/validate-quiz';
 export function ImportModal({ onClose, onImport }: { onClose: () => void; onImport: (qs: EditableQuestion[]) => void }) {
   const [rows, setRows] = useState<ImportRow[] | null>(null);
   const [text, setText] = useState('');
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    setMounted(true);
+    const origOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => {
+      document.body.style.overflow = origOverflow;
+    };
+  }, []);
 
   const parse = (t: string) => {
     setText(t);
@@ -36,7 +47,9 @@ export function ImportModal({ onClose, onImport }: { onClose: () => void; onImpo
     onClose();
   };
 
-  return (
+  if (!mounted) return null;
+
+  return createPortal(
     <div className="fixed inset-0 z-50 flex animate-modalBackdrop items-center justify-center bg-black/70 p-4" role="dialog" aria-modal="true" aria-labelledby="import-title">
       <div className="panel flex max-h-[90vh] w-full max-w-4xl animate-modalPop flex-col gap-4 overflow-hidden">
         <div className="flex items-center justify-between">
@@ -84,7 +97,8 @@ export function ImportModal({ onClose, onImport }: { onClose: () => void; onImpo
           </div>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }
 

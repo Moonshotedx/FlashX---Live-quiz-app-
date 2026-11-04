@@ -1,5 +1,6 @@
 'use client';
 import { useState } from 'react';
+import { createPortal } from 'react-dom';
 import { CSS } from '@dnd-kit/utilities';
 import { useSortable } from '@dnd-kit/sortable';
 import type { EditableQuestion, QuizIssue } from '@/lib/validate-quiz';
@@ -171,16 +172,19 @@ export function QuestionCard({
         </ul>
       )}
 
-      {preview && (
-        <div className="fixed inset-0 z-50 flex animate-modalBackdrop items-center justify-center bg-black/70 p-4" onClick={() => setPreview(false)} role="dialog" aria-modal="true">
-          <div onClick={(e) => e.stopPropagation()} className="animate-modalPop space-y-3">
-            <PhonePreview theme={theme} question={q} />
-            <div className="text-center">
-              <button className="btn-secondary" onClick={() => setPreview(false)}>Close preview</button>
+      {preview &&
+        typeof document !== 'undefined' &&
+        createPortal(
+          <div className="fixed inset-0 z-50 flex animate-modalBackdrop items-center justify-center bg-black/70 p-4" onClick={() => setPreview(false)} role="dialog" aria-modal="true">
+            <div onClick={(e) => e.stopPropagation()} className="animate-modalPop space-y-3">
+              <PhonePreview theme={theme} question={q} />
+              <div className="text-center">
+                <button className="btn-secondary" onClick={() => setPreview(false)}>Close preview</button>
+              </div>
             </div>
-          </div>
-        </div>
-      )}
+          </div>,
+          document.body,
+        )}
     </div>
   );
 }
